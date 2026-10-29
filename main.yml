@@ -1,0 +1,2030 @@
+name: Build HesabYar APK
+
+# حساب‌یار: ساخت خودکار پروژه Flutter + APK (فقط همین یک فایل لازم است)
+# مسیر فایل در ریپازیتوری: .github/workflows/main.yml
+# پیش‌نیاز: در Settings > Secrets and variables > Actions دو Secret بسازید:
+#   SUPABASE_URL  و  SUPABASE_ANON_KEY
+# (فقط anon key؛ هرگز service_role را اینجا نگذارید)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Flutter project and write source files
+        run: |
+          set -euo pipefail
+          flutter create --org com.hesabyar --project-name hesabyar --platforms android .
+          rm -rf test
+          mkdir -p supabase
+          cat > pubspec.yaml <<'PUBSPEC_EOF'
+          name: hesabyar
+          description: Debt and receivables manager with cloud backup
+          publish_to: none
+          version: 1.0.0+1
+          environment:
+            sdk: ">=3.3.0 <4.0.0"
+          dependencies:
+            flutter:
+              sdk: flutter
+            flutter_localizations:
+              sdk: flutter
+            supabase_flutter: ^2.8.0
+            google_fonts: ^6.2.1
+            shared_preferences: ^2.3.2
+            path_provider: ^2.1.4
+            share_plus: ^10.1.4
+            crypto: ^3.0.5
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+          flutter:
+            uses-material-design: true
+          PUBSPEC_EOF
+          cat > lib/main.dart <<'MAIN_EOF'
+          import 'package:flutter/material.dart';
+          import 'package:flutter_localizations/flutter_localizations.dart';
+          import 'package:google_fonts/google_fonts.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
+          import 'data.dart';
+          import 'screens.dart';
+
+          Future<void> main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            if (kConfigured) {
+              await Supabase.initialize(url: kUrl, anonKey: kKey);
+            }
+            runApp(const HesabYarApp());
+          }
+
+          class HesabYarApp extends StatelessWidget {
+            const HesabYarApp({super.key});
+
+            ThemeData _theme(Brightness b) {
+              final cs = ColorScheme.fromSeed(
+                  seedColor: const Color(0xFF0E7C86), brightness: b);
+              final base = ThemeData(useMaterial3: true, colorScheme: cs);
+              return base.copyWith(
+                textTheme: GoogleFonts.vazirmatnTextTheme(base.textTheme),
+                scaffoldBackgroundColor:
+                    b == Brightness.light ? const Color(0xFFF3F7F8) : null,
+                appBarTheme: const AppBarTheme(
+                    scrolledUnderElevation: 0, backgroundColor: Colors.transparent),
+              );
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'حساب‌یار',
+                debugShowCheckedModeBanner: false,
+                locale: const Locale('fa'),
+                supportedLocales: const [Locale('fa')],
+                localizationsDelegates: const [
+                  GlobalMaterialLocalizations.delegate,
+                  GlobalWidgetsLocalizations.delegate,
+                  GlobalCupertinoLocalizations.delegate,
+                ],
+                theme: _theme(Brightness.light),
+                darkTheme: _theme(Brightness.dark),
+                home: const Root(),
+              );
+            }
+          }
+
+          class Root extends StatelessWidget {
+            const Root({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              if (!kConfigured) return const SetupPage();
+              return StreamBuilder<AuthState>(
+                stream: sb.auth.onAuthStateChange,
+                builder: (context, snap) {
+                  final s = sb.auth.currentSession;
+                  if (s == null) return const AuthPage();
+                  return Home(key: ValueKey(s.user.id));
+                },
+              );
+            }
+          }
+          MAIN_EOF
+          cat > lib/data.dart <<'DATA_EOF'
+          import 'dart:convert';
+          import 'dart:typed_data';
+          import 'package:crypto/crypto.dart';
+          import 'package:flutter/foundation.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
+
+          const kUrl = String.fromEnvironment('SUPABASE_URL');
+          const kKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+          bool get kConfigured => kUrl.isNotEmpty && kKey.isNotEmpty;
+          SupabaseClient get sb => Supabase.instance.client;
+          String uid() => sb.auth.currentUser!.id;
+
+          final unit = ValueNotifier<String>('تومان');
+          String profileName = '';
+
+          // ---------- formatting ----------
+          String faDigits(String s) {
+            var o = s;
+            for (var i = 0; i < 10; i++) {
+              o = o.replaceAll('$i', String.fromCharCode(0x06F0 + i));
+            }
+            return o;
+          }
+
+          int? parseAmount(String s) {
+            var t = s.trim();
+            for (var i = 0; i < 10; i++) {
+              t = t
+                  .replaceAll(String.fromCharCode(0x06F0 + i), '$i')
+                  .replaceAll(String.fromCharCode(0x0660 + i), '$i');
+            }
+            t = t.replaceAll(RegExp(r'[,،٬\s]'), '');
+            return int.tryParse(t);
+          }
+
+          String group(int v) => v
+              .toString()
+              .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => '٬');
+          String money(int v) => '${faDigits(group(v))} ${unit.value}';
+          String _p2(int n) => n.toString().padLeft(2, '0');
+          String ymd(DateTime d) => '${d.year}-${_p2(d.month)}-${_p2(d.day)}';
+          String fmtDate(DateTime d) => faDigits('${d.year}/${_p2(d.month)}/${_p2(d.day)}');
+
+          // ---------- model ----------
+          class Acc {
+            final Map<String, dynamic> m;
+            Acc(this.m);
+            String get id => m['id'] as String;
+            String get contactId => m['contact_id'] as String;
+            String get title => (m['title'] ?? '') as String;
+            bool get isRec => m['type'] == 'receivable';
+            int get principal => (m['principal_amount'] as num).toInt();
+            List<dynamic> get txs => (m['transactions'] as List<dynamic>?) ?? [];
+            int get paid => txs.fold<int>(0, (s, t) => s + (t['amount'] as num).toInt());
+            int get remaining => principal - paid;
+            bool get settled => remaining <= 0;
+            String get who => ((m['contacts'] as Map?)?['name'] ?? '') as String;
+            DateTime? get due =>
+                m['due_at'] == null ? null : DateTime.tryParse(m['due_at'] as String);
+            DateTime? get opened => DateTime.tryParse(
+                (m['opened_at'] ?? m['created_at'] ?? '') as String);
+          }
+
+          // ---------- store (online-first, read-only offline cache) ----------
+          class Store extends ChangeNotifier {
+            List<Map<String, dynamic>> rawAccs = [];
+            List<Map<String, dynamic>> contacts = [];
+            bool loading = false;
+            bool offline = false;
+            List<Acc> get accs => rawAccs.map(Acc.new).toList();
+
+            void refreshUI() => notifyListeners();
+
+            Future<void> load() async {
+              loading = true;
+              notifyListeners();
+              final p = await SharedPreferences.getInstance();
+              final key = 'cache_${uid()}';
+              try {
+                final c = await sb
+                    .from('contacts')
+                    .select()
+                    .isFilter('archived_at', null)
+                    .order('name');
+                final a = await sb
+                    .from('accounts')
+                    .select('*, contacts(name), transactions(id,amount,transaction_date,note)')
+                    .order('created_at', ascending: false);
+                contacts = List<Map<String, dynamic>>.from(c);
+                rawAccs = List<Map<String, dynamic>>.from(a);
+                offline = false;
+                await p.setString(key, jsonEncode({'c': contacts, 'a': rawAccs}));
+              } catch (e) {
+                offline = true;
+                final s = p.getString(key);
+                if (s != null) {
+                  final j = jsonDecode(s);
+                  contacts = List<Map<String, dynamic>>.from(j['c']);
+                  rawAccs = List<Map<String, dynamic>>.from(j['a']);
+                }
+              }
+              loading = false;
+              notifyListeners();
+            }
+
+            Future<void> clear() async {
+              rawAccs = [];
+              contacts = [];
+              final p = await SharedPreferences.getInstance();
+              for (final k in p.getKeys().where((k) => k.startsWith('cache_')).toList()) {
+                await p.remove(k);
+              }
+              notifyListeners();
+            }
+          }
+
+          final store = Store();
+
+          Future<void> loadProfile() async {
+            try {
+              final r = await sb.from('profiles').select().maybeSingle();
+              if (r != null) {
+                unit.value = (r['currency_unit'] ?? 'تومان') as String;
+                profileName = (r['display_name'] ?? '') as String;
+              }
+            } catch (_) {}
+          }
+
+          // ---------- backup ----------
+          Future<List<Map<String, dynamic>>> fetchAll(String table) async {
+            final out = <Map<String, dynamic>>[];
+            var from = 0;
+            while (true) {
+              final r = await sb
+                  .from(table)
+                  .select()
+                  .order('created_at')
+                  .order('id')
+                  .range(from, from + 999);
+              out.addAll(List<Map<String, dynamic>>.from(r));
+              if (r.length < 1000) break;
+              from += 1000;
+            }
+            return out;
+          }
+
+          Future<Map<String, dynamic>> snapshot() async {
+            final data = {
+              'contacts': await fetchAll('contacts'),
+              'accounts': await fetchAll('accounts'),
+              'transactions': await fetchAll('transactions'),
+            };
+            final checksum = sha256.convert(utf8.encode(jsonEncode(data))).toString();
+            return {
+              'app': 'hesabyar',
+              'format_version': 1,
+              'created_at': DateTime.now().toUtc().toIso8601String(),
+              'checksum': checksum,
+              'data': data,
+            };
+          }
+
+          Future<void> createBackup() async {
+            final snap = await snapshot();
+            final bytes = Uint8List.fromList(utf8.encode(jsonEncode(snap)));
+            final path = '${uid()}/backup_${DateTime.now().toUtc().millisecondsSinceEpoch}.json';
+            await sb.storage.from('backups').uploadBinary(path, bytes,
+                fileOptions: const FileOptions(contentType: 'application/json'));
+            await sb.from('backup_records').insert({
+              'user_id': uid(),
+              'storage_path': path,
+              'format_version': 1,
+              'file_size': bytes.length,
+              'checksum': snap['checksum'],
+              'status': 'ok',
+            });
+          }
+
+          Future<Map<String, dynamic>> readBackup(String path) async {
+            final bytes = await sb.storage.from('backups').download(path);
+            final j = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+            if (j['format_version'] != 1 || j['data'] == null) {
+              throw 'فرمت فایل پشتیبان پشتیبانی نمی‌شود';
+            }
+            final sum = sha256.convert(utf8.encode(jsonEncode(j['data']))).toString();
+            if (sum != j['checksum']) throw 'فایل پشتیبان خراب یا دستکاری شده است';
+            return j;
+          }
+
+          Future<void> pruneBackups(int keep) async {
+            final r = await sb
+                .from('backup_records')
+                .select('id,storage_path')
+                .order('created_at', ascending: false)
+                .range(keep, keep + 200);
+            final old = List<Map<String, dynamic>>.from(r);
+            if (old.isEmpty) return;
+            await sb.storage
+                .from('backups')
+                .remove(old.map((e) => e['storage_path'] as String).toList());
+            await sb
+                .from('backup_records')
+                .delete()
+                .inFilter('id', old.map((e) => e['id']).toList());
+          }
+
+          Future<void> autoBackupIfDue() async {
+            try {
+              final p = await SharedPreferences.getInstance();
+              if (!(p.getBool('auto_backup') ?? false)) return;
+              final r = await sb
+                  .from('backup_records')
+                  .select('created_at')
+                  .order('created_at', ascending: false)
+                  .limit(1);
+              if (r.isNotEmpty) {
+                final last = DateTime.parse(r.first['created_at'] as String).toLocal();
+                if (DateTime.now().difference(last).inHours < 24) return;
+              }
+              await createBackup();
+              await pruneBackups(10);
+            } catch (_) {}
+          }
+          DATA_EOF
+          cat > lib/screens.dart <<'SCREENS_EOF'
+          import 'dart:convert';
+          import 'dart:io';
+          import 'package:flutter/material.dart';
+          import 'package:path_provider/path_provider.dart';
+          import 'package:share_plus/share_plus.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
+          import 'data.dart';
+
+          const cRec = Color(0xFF16A37F);
+          const cPay = Color(0xFFE5484D);
+          const cBrand = Color(0xFF0E7C86);
+
+          // ---------- helpers ----------
+          void toast(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(
+              SnackBar(content: Text(m), behavior: SnackBarBehavior.floating));
+
+          Future<bool> confirm(BuildContext c, String title, String body,
+                  {String ok = 'تأیید'}) async =>
+              await showDialog<bool>(
+                  context: c,
+                  builder: (ctx) => AlertDialog(
+                        title: Text(title),
+                        content: Text(body),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('انصراف')),
+                          FilledButton(
+                              onPressed: () => Navigator.pop(ctx, true), child: Text(ok)),
+                        ],
+                      )) ??
+              false;
+
+          InputDecoration deco(String l, {IconData? icon}) => InputDecoration(
+                labelText: l,
+                prefixIcon: icon == null ? null : Icon(icon),
+                filled: true,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+              );
+
+          Future<bool> run(BuildContext c, Future<void> Function() f,
+              {bool reload = true}) async {
+            final m = ScaffoldMessenger.of(c);
+            void msg(String t) => m.showSnackBar(
+                SnackBar(content: Text(t), behavior: SnackBarBehavior.floating));
+            try {
+              await f();
+              if (reload) await store.load();
+              return true;
+            } on PostgrestException catch (e) {
+              msg('خطا: ${e.message}');
+            } on AuthException catch (e) {
+              msg(e.message);
+            } on StorageException catch (e) {
+              msg('خطای فضای ذخیره: ${e.message}');
+            } catch (e) {
+              msg(e is String ? e : 'اتصال برقرار نیست یا خطایی رخ داد');
+            }
+            return false;
+          }
+
+          Widget card(BuildContext c, Widget child,
+              {VoidCallback? onTap, EdgeInsets pad = const EdgeInsets.all(16)}) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Material(
+                color: Theme.of(c).colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(20),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: onTap,
+                  child: Padding(padding: pad, child: child),
+                ),
+              ),
+            );
+          }
+
+          Widget sec(BuildContext c, String t) => Padding(
+                padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+                child: Text(t,
+                    style: Theme.of(c)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+              );
+
+          Widget emptyBox(String t) => Padding(
+                padding: const EdgeInsets.all(32),
+                child: Center(child: Text(t, textAlign: TextAlign.center)),
+              );
+
+          Color accColor(Acc a) => a.isRec ? cRec : cPay;
+
+          int netOf(String cid) {
+            var s = 0;
+            for (final a in store.accs) {
+              if (a.contactId == cid && !a.settled) s += a.isRec ? a.remaining : -a.remaining;
+            }
+            return s;
+          }
+
+          // ---------- setup / auth ----------
+          class SetupPage extends StatelessWidget {
+            const SetupPage({super.key});
+            @override
+            Widget build(BuildContext c) => const Scaffold(
+                  body: Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        'کلیدهای Supabase تنظیم نشده‌اند.\nدر GitHub به Settings ← Secrets and variables ← Actions بروید، مقدارهای SUPABASE_URL و SUPABASE_ANON_KEY را اضافه کنید و Build را دوباره اجرا کنید.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                );
+          }
+
+          class AuthPage extends StatefulWidget {
+            const AuthPage({super.key});
+            @override
+            State<AuthPage> createState() => _AuthPageState();
+          }
+
+          class _AuthPageState extends State<AuthPage> {
+            final email = TextEditingController();
+            final pass = TextEditingController();
+            bool signup = false, busy = false, hide = true;
+
+            Future<void> submit() async {
+              final e = email.text.trim(), p = pass.text;
+              if (!e.contains('@') || p.length < 8) {
+                toast(context, 'ایمیل معتبر و رمز عبور حداقل ۸ کاراکتری وارد کنید');
+                return;
+              }
+              setState(() => busy = true);
+              try {
+                if (signup) {
+                  final r = await sb.auth.signUp(email: e, password: p);
+                  if (r.session == null && mounted) {
+                    toast(context, 'لینک تأیید به ایمیل شما ارسال شد. پس از تأیید، وارد شوید.');
+                    setState(() => signup = false);
+                  }
+                } else {
+                  await sb.auth.signInWithPassword(email: e, password: p);
+                }
+              } on AuthException catch (x) {
+                if (mounted) toast(context, x.message);
+              } catch (_) {
+                if (mounted) toast(context, 'اتصال برقرار نیست');
+              }
+              if (mounted) setState(() => busy = false);
+            }
+
+            Future<void> forgot() async {
+              final e = email.text.trim();
+              if (!e.contains('@')) {
+                toast(context, 'ابتدا ایمیل خود را وارد کنید');
+                return;
+              }
+              try {
+                await sb.auth.resetPasswordForEmail(e);
+                if (mounted) toast(context, 'اگر این ایمیل ثبت شده باشد، لینک بازیابی ارسال می‌شود');
+              } catch (_) {
+                if (mounted) toast(context, 'ارسال ناموفق بود');
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final t = Theme.of(context).textTheme;
+              return Scaffold(
+                body: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFF0E7C86), Color(0xFF14B8A6)],
+                        stops: [0, .5]),
+                  ),
+                  child: SafeArea(
+                    child: Center(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          children: [
+                            const Icon(Icons.account_balance_wallet_rounded,
+                                size: 64, color: Colors.white),
+                            const SizedBox(height: 8),
+                            Text('حساب‌یار',
+                                style: t.headlineMedium?.copyWith(
+                                    color: Colors.white, fontWeight: FontWeight.bold)),
+                            Text('مدیریت بدهی، طلب و پشتیبان‌گیری ابری',
+                                style: t.bodyMedium?.copyWith(color: Colors.white70)),
+                            const SizedBox(height: 28),
+                            Card(
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(28)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Column(
+                                  children: [
+                                    Text(signup ? 'ساخت حساب' : 'ورود',
+                                        style: t.titleLarge
+                                            ?.copyWith(fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 16),
+                                    TextField(
+                                        controller: email,
+                                        keyboardType: TextInputType.emailAddress,
+                                        textDirection: TextDirection.ltr,
+                                        decoration: deco('ایمیل', icon: Icons.email_outlined)),
+                                    const SizedBox(height: 12),
+                                    TextField(
+                                      controller: pass,
+                                      obscureText: hide,
+                                      textDirection: TextDirection.ltr,
+                                      decoration: deco('رمز عبور', icon: Icons.lock_outline)
+                                          .copyWith(
+                                              suffixIcon: IconButton(
+                                                  icon: Icon(hide
+                                                      ? Icons.visibility_off
+                                                      : Icons.visibility),
+                                                  onPressed: () =>
+                                                      setState(() => hide = !hide))),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      height: 50,
+                                      child: FilledButton(
+                                        onPressed: busy ? null : submit,
+                                        child: busy
+                                            ? const SizedBox(
+                                                width: 22,
+                                                height: 22,
+                                                child: CircularProgressIndicator(strokeWidth: 2))
+                                            : Text(signup ? 'ثبت‌نام' : 'ورود'),
+                                      ),
+                                    ),
+                                    TextButton(
+                                        onPressed: () => setState(() => signup = !signup),
+                                        child: Text(signup
+                                            ? 'حساب دارید؟ وارد شوید'
+                                            : 'حساب ندارید؟ ثبت‌نام کنید')),
+                                    if (!signup)
+                                      TextButton(
+                                          onPressed: forgot,
+                                          child: const Text('فراموشی رمز عبور')),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          // ---------- home shell ----------
+          class Home extends StatefulWidget {
+            const Home({super.key});
+            @override
+            State<Home> createState() => _HomeState();
+          }
+
+          class _HomeState extends State<Home> {
+            int i = 0;
+
+            @override
+            void initState() {
+              super.initState();
+              store.load().then((_) => autoBackupIfDue());
+              loadProfile().then((_) => store.refreshUI());
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: IndexedStack(index: i, children: const [
+                    DashboardPage(),
+                    AccountsPage(),
+                    PeoplePage(),
+                    BackupPage(),
+                    SettingsPage(),
+                  ]),
+                ),
+                floatingActionButton: i <= 2
+                    ? FloatingActionButton.extended(
+                        onPressed: () => openAccountForm(context),
+                        icon: const Icon(Icons.add),
+                        label: const Text('ثبت حساب'))
+                    : null,
+                bottomNavigationBar: NavigationBar(
+                  selectedIndex: i,
+                  onDestinationSelected: (v) => setState(() => i = v),
+                  destinations: const [
+                    NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'خانه'),
+                    NavigationDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: 'حساب‌ها'),
+                    NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'اشخاص'),
+                    NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
+                    NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
+                  ],
+                ),
+              );
+            }
+          }
+
+          Widget offlineBanner(BuildContext c) => store.offline
+              ? Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                      color: Theme.of(c).colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(16)),
+                  child: const Row(children: [
+                    Icon(Icons.cloud_off),
+                    SizedBox(width: 8),
+                    Expanded(child: Text('اتصال برقرار نیست؛ آخرین داده‌های ذخیره‌شده فقط برای مشاهده نمایش داده می‌شود.')),
+                  ]),
+                )
+              : const SizedBox.shrink();
+
+          // ---------- dashboard ----------
+          class DashboardPage extends StatelessWidget {
+            const DashboardPage({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit]),
+                builder: (c, _) {
+                  final accs = store.accs;
+                  final open = accs.where((a) => !a.settled).toList();
+                  final rec = open.where((a) => a.isRec).fold<int>(0, (s, a) => s + a.remaining);
+                  final pay = open.where((a) => !a.isRec).fold<int>(0, (s, a) => s + a.remaining);
+                  final net = rec - pay;
+                  final now = DateTime.now();
+                  final today = DateTime(now.year, now.month, now.day);
+                  final dueList = open
+                      .where((a) => a.due != null && a.due!.difference(today).inDays <= 14)
+                      .toList()
+                    ..sort((x, y) => x.due!.compareTo(y.due!));
+                  final recent = <Map<String, dynamic>>[];
+                  for (final a in accs) {
+                    for (final t in a.txs) {
+                      recent.add({...Map<String, dynamic>.from(t as Map), 'acc': a});
+                    }
+                  }
+                  recent.sort((x, y) =>
+                      '${y['transaction_date']}'.compareTo('${x['transaction_date']}'));
+                  final tt = Theme.of(c).textTheme;
+                  return RefreshIndicator(
+                    onRefresh: store.load,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                      children: [
+                        Text(profileName.isEmpty ? 'سلام 👋' : 'سلام $profileName 👋',
+                            style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 12),
+                        offlineBanner(c),
+                        Container(
+                          padding: const EdgeInsets.all(22),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(28),
+                            gradient: const LinearGradient(
+                                begin: Alignment.topRight,
+                                end: Alignment.bottomLeft,
+                                colors: [Color(0xFF0E7C86), Color(0xFF14B8A6)]),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('خالص مانده',
+                                  style: tt.bodyMedium?.copyWith(color: Colors.white70)),
+                              const SizedBox(height: 6),
+                              Text(money(net.abs()),
+                                  style: tt.headlineMedium?.copyWith(
+                                      color: Colors.white, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 4),
+                              Text(
+                                  net > 0
+                                      ? 'در مجموع طلبکار هستید'
+                                      : net < 0
+                                          ? 'در مجموع بدهکار هستید'
+                                          : 'تراز صفر',
+                                  style: tt.bodySmall?.copyWith(color: Colors.white70)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(children: [
+                          Expanded(child: _stat(c, 'مجموع طلب‌ها', rec, cRec, Icons.south_west)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _stat(c, 'مجموع بدهی‌ها', pay, cPay, Icons.north_east)),
+                        ]),
+                        sec(c, 'سررسیدهای نزدیک'),
+                        if (dueList.isEmpty) card(c, const Text('سررسید نزدیکی ندارید ✨')),
+                        ...dueList.take(5).map((a) => AccTile(a)),
+                        sec(c, 'آخرین پرداخت‌ها'),
+                        if (recent.isEmpty) card(c, const Text('هنوز پرداختی ثبت نشده است')),
+                        ...recent.take(5).map((t) {
+                          final a = t['acc'] as Acc;
+                          return card(
+                            c,
+                            Row(children: [
+                              Icon(Icons.payments_outlined, color: accColor(a)),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                    Text('${a.who} — ${a.title}',
+                                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    Text(fmtDate(DateTime.parse('${t['transaction_date']}')),
+                                        style: tt.bodySmall),
+                                  ])),
+                              Text(money((t['amount'] as num).toInt()),
+                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ]),
+                            onTap: () => Navigator.push(c,
+                                MaterialPageRoute(builder: (_) => AccountPage(a.id))),
+                          );
+                        }),
+                      ],
+                    ),
+                  );
+                },
+              );
+            }
+
+            Widget _stat(BuildContext c, String l, int v, Color col, IconData ic) => card(
+                  c,
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    CircleAvatar(
+                        radius: 18,
+                        backgroundColor: col.withValues(alpha: .12),
+                        child: Icon(ic, color: col, size: 18)),
+                    const SizedBox(height: 10),
+                    Text(l, style: Theme.of(c).textTheme.bodySmall),
+                    const SizedBox(height: 2),
+                    Text(money(v),
+                        style: TextStyle(fontWeight: FontWeight.bold, color: col)),
+                  ]),
+                );
+          }
+
+          class AccTile extends StatelessWidget {
+            final Acc a;
+            const AccTile(this.a, {super.key});
+
+            @override
+            Widget build(BuildContext c) {
+              final col = accColor(a);
+              final tt = Theme.of(c).textTheme;
+              final now = DateTime.now();
+              final overdue = !a.settled &&
+                  a.due != null &&
+                  a.due!.isBefore(DateTime(now.year, now.month, now.day));
+              return card(
+                c,
+                Row(children: [
+                  CircleAvatar(
+                      backgroundColor: col.withValues(alpha: .12),
+                      child: Icon(a.isRec ? Icons.south_west : Icons.north_east, color: col)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(a.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text('${a.who} • ${a.isRec ? 'طلب' : 'بدهی'}', style: tt.bodySmall),
+                      if (a.due != null && !a.settled)
+                        Text('سررسید ${fmtDate(a.due!)}${overdue ? ' (گذشته)' : ''}',
+                            style: tt.bodySmall
+                                ?.copyWith(color: overdue ? cPay : null)),
+                    ]),
+                  ),
+                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text(a.settled ? 'تسویه‌شده' : money(a.remaining),
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: a.settled ? Colors.grey : col)),
+                    if (!a.settled) Text('از ${money(a.principal)}', style: tt.bodySmall),
+                  ]),
+                ]),
+                onTap: () => Navigator.push(
+                    c, MaterialPageRoute(builder: (_) => AccountPage(a.id))),
+              );
+            }
+          }
+
+          // ---------- accounts list ----------
+          class AccountsPage extends StatefulWidget {
+            const AccountsPage({super.key});
+            @override
+            State<AccountsPage> createState() => _AccountsPageState();
+          }
+
+          class _AccountsPageState extends State<AccountsPage> {
+            String q = '', type = 'all', st = 'open';
+            DateTimeRange? range;
+
+            Widget _chip(String label, bool sel, VoidCallback f) => Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 8),
+                  child: ChoiceChip(label: Text(label), selected: sel, onSelected: (_) => f()),
+                );
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit]),
+                builder: (c, _) {
+                  final list = store.accs.where((a) {
+                    if (type == 'rec' && !a.isRec) return false;
+                    if (type == 'pay' && a.isRec) return false;
+                    if (st == 'open' && a.settled) return false;
+                    if (st == 'settled' && !a.settled) return false;
+                    if (q.isNotEmpty && !(a.who.contains(q) || a.title.contains(q))) return false;
+                    if (range != null) {
+                      final o = a.opened;
+                      if (o == null || o.isBefore(range!.start) || o.isAfter(range!.end)) return false;
+                    }
+                    return true;
+                  }).toList();
+                  return RefreshIndicator(
+                    onRefresh: store.load,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                      children: [
+                        offlineBanner(c),
+                        Row(children: [
+                          Expanded(
+                            child: TextField(
+                                onChanged: (v) => setState(() => q = v.trim()),
+                                decoration: deco('جستجوی نام یا عنوان', icon: Icons.search)),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton.filledTonal(
+                            icon: Icon(range == null ? Icons.date_range : Icons.close),
+                            onPressed: () async {
+                              if (range != null) {
+                                setState(() => range = null);
+                                return;
+                              }
+                              final r = await showDateRangePicker(
+                                  context: c,
+                                  firstDate: DateTime(2000),
+                                  lastDate: DateTime(2100));
+                              if (r != null) setState(() => range = r);
+                            },
+                          ),
+                        ]),
+                        const SizedBox(height: 12),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(children: [
+                            _chip('همه', type == 'all', () => setState(() => type = 'all')),
+                            _chip('طلب', type == 'rec', () => setState(() => type = 'rec')),
+                            _chip('بدهی', type == 'pay', () => setState(() => type = 'pay')),
+                            const SizedBox(width: 12),
+                            _chip('باز', st == 'open', () => setState(() => st = 'open')),
+                            _chip('تسویه‌شده', st == 'settled', () => setState(() => st = 'settled')),
+                            _chip('همه وضعیت‌ها', st == 'all', () => setState(() => st = 'all')),
+                          ]),
+                        ),
+                        const SizedBox(height: 12),
+                        if (list.isEmpty) emptyBox('حسابی پیدا نشد'),
+                        ...list.map((a) => AccTile(a)),
+                      ],
+                    ),
+                  );
+                },
+              );
+            }
+          }
+
+          // ---------- people ----------
+          Future<void> personDialog(BuildContext c, {Map<String, dynamic>? edit}) async {
+            final n = TextEditingController(text: '${edit?['name'] ?? ''}');
+            final p = TextEditingController(text: '${edit?['phone'] ?? ''}');
+            final no = TextEditingController(text: '${edit?['notes'] ?? ''}');
+            final ok = await showDialog<bool>(
+              context: c,
+              builder: (ctx) => AlertDialog(
+                title: Text(edit == null ? 'شخص جدید' : 'ویرایش شخص'),
+                content: SingleChildScrollView(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    TextField(controller: n, decoration: deco('نام')),
+                    const SizedBox(height: 12),
+                    TextField(
+                        controller: p,
+                        keyboardType: TextInputType.phone,
+                        decoration: deco('شماره تماس (اختیاری)')),
+                    const SizedBox(height: 12),
+                    TextField(controller: no, maxLines: 2, decoration: deco('توضیحات (اختیاری)')),
+                  ]),
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('انصراف')),
+                  FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('ذخیره')),
+                ],
+              ),
+            );
+            if (ok != true) return;
+            if (n.text.trim().isEmpty) {
+              if (c.mounted) toast(c, 'نام شخص را وارد کنید');
+              return;
+            }
+            if (!c.mounted) return;
+            final body = {
+              'name': n.text.trim(),
+              'phone': p.text.trim().isEmpty ? null : p.text.trim(),
+              'notes': no.text.trim().isEmpty ? null : no.text.trim(),
+            };
+            await run(c, () async {
+              if (edit == null) {
+                await sb.from('contacts').insert({...body, 'user_id': uid()});
+              } else {
+                await sb.from('contacts').update(body).eq('id', edit['id']);
+              }
+            });
+          }
+
+          class PeoplePage extends StatefulWidget {
+            const PeoplePage({super.key});
+            @override
+            State<PeoplePage> createState() => _PeoplePageState();
+          }
+
+          class _PeoplePageState extends State<PeoplePage> {
+            String q = '';
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit]),
+                builder: (c, _) {
+                  final list = store.contacts
+                      .where((p) => q.isEmpty || '${p['name']}'.contains(q))
+                      .toList();
+                  return RefreshIndicator(
+                    onRefresh: store.load,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                      children: [
+                        offlineBanner(c),
+                        Row(children: [
+                          Expanded(
+                              child: TextField(
+                                  onChanged: (v) => setState(() => q = v.trim()),
+                                  decoration: deco('جستجوی شخص', icon: Icons.search))),
+                          const SizedBox(width: 8),
+                          IconButton.filled(
+                              icon: const Icon(Icons.person_add_alt_1),
+                              onPressed: () => personDialog(c)),
+                        ]),
+                        const SizedBox(height: 12),
+                        if (list.isEmpty) emptyBox('شخصی ثبت نشده است'),
+                        ...list.map((p) {
+                          final net = netOf(p['id'] as String);
+                          final col = net > 0 ? cRec : (net < 0 ? cPay : Colors.grey);
+                          final name = '${p['name']}';
+                          return card(
+                            c,
+                            Row(children: [
+                              CircleAvatar(
+                                  backgroundColor: cBrand.withValues(alpha: .12),
+                                  child: Text(name.isEmpty ? '?' : name.substring(0, 1),
+                                      style: const TextStyle(color: cBrand, fontWeight: FontWeight.bold))),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                    Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    if (p['phone'] != null)
+                                      Text(faDigits('${p['phone']}'),
+                                          style: Theme.of(c).textTheme.bodySmall),
+                                  ])),
+                              Text(net == 0 ? 'تسویه' : (net > 0 ? 'طلب ' : 'بدهی ') + money(net.abs()),
+                                  style: TextStyle(color: col, fontWeight: FontWeight.bold)),
+                            ]),
+                            onTap: () => Navigator.push(c,
+                                MaterialPageRoute(builder: (_) => PersonPage('${p['id']}'))),
+                          );
+                        }),
+                      ],
+                    ),
+                  );
+                },
+              );
+            }
+          }
+
+          class PersonPage extends StatelessWidget {
+            final String id;
+            const PersonPage(this.id, {super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit]),
+                builder: (c, _) {
+                  final p = store.contacts.where((x) => x['id'] == id).firstOrNull;
+                  if (p == null) {
+                    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                  }
+                  final accs = store.accs.where((a) => a.contactId == id).toList();
+                  final net = netOf(id);
+                  return Scaffold(
+                    appBar: AppBar(title: Text('${p['name']}'), actions: [
+                      IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => personDialog(c, edit: p)),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () async {
+                          if (await confirm(c, 'حذف شخص',
+                              'با حذف این شخص، همهٔ حساب‌ها و پرداخت‌های او هم حذف می‌شود. ادامه می‌دهید؟',
+                              ok: 'حذف')) {
+                            if (!c.mounted) return;
+                            final done = await run(c, () async {
+                              await sb.from('contacts').delete().eq('id', id);
+                            });
+                            if (done && c.mounted) Navigator.pop(c);
+                          }
+                        },
+                      ),
+                    ]),
+                    floatingActionButton: FloatingActionButton.extended(
+                        onPressed: () => openAccountForm(c, contactId: id),
+                        icon: const Icon(Icons.add),
+                        label: const Text('حساب جدید')),
+                    body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
+                      card(
+                          c,
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(net == 0 ? 'تسویه' : (net > 0 ? 'طلب شما: ' : 'بدهی شما: ') + money(net.abs()),
+                                style: Theme.of(c).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: net > 0 ? cRec : (net < 0 ? cPay : null))),
+                            if (p['phone'] != null) Text('تلفن: ${faDigits('${p['phone']}')}'),
+                            if (p['notes'] != null) Text('${p['notes']}'),
+                          ])),
+                      sec(c, 'حساب‌ها'),
+                      if (accs.isEmpty) emptyBox('برای این شخص حسابی ثبت نشده است'),
+                      ...accs.map((a) => AccTile(a)),
+                    ]),
+                  );
+                },
+              );
+            }
+          }
+
+          // ---------- account details ----------
+          class AccountPage extends StatelessWidget {
+            final String id;
+            const AccountPage(this.id, {super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit]),
+                builder: (c, _) {
+                  final a = store.accs.where((x) => x.id == id).firstOrNull;
+                  if (a == null) {
+                    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                  }
+                  final col = accColor(a);
+                  final tt = Theme.of(c).textTheme;
+                  final txs = List<Map<String, dynamic>>.from(a.txs.map((e) => Map<String, dynamic>.from(e as Map)))
+                    ..sort((x, y) => '${y['transaction_date']}'.compareTo('${x['transaction_date']}'));
+                  return Scaffold(
+                    appBar: AppBar(title: Text(a.title), actions: [
+                      PopupMenuButton<String>(
+                        onSelected: (v) async {
+                          if (v == 'edit') {
+                            openAccountForm(c, edit: a);
+                          } else if (v == 'delete') {
+                            if (await confirm(c, 'حذف حساب', 'حساب و همهٔ پرداخت‌های آن حذف می‌شود. ادامه می‌دهید؟', ok: 'حذف')) {
+                              if (!c.mounted) return;
+                              final done = await run(c, () async {
+                                await sb.from('accounts').delete().eq('id', a.id);
+                              });
+                              if (done && c.mounted) Navigator.pop(c);
+                            }
+                          }
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'edit', child: Text('ویرایش')),
+                          PopupMenuItem(value: 'delete', child: Text('حذف حساب')),
+                        ],
+                      ),
+                    ]),
+                    floatingActionButton: a.settled
+                        ? null
+                        : FloatingActionButton.extended(
+                            onPressed: () => showModalBottomSheet(
+                                context: c,
+                                isScrollControlled: true,
+                                showDragHandle: true,
+                                builder: (ctx) => Padding(
+                                    padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+                                    child: PaymentForm(a))),
+                            icon: const Icon(Icons.add_card),
+                            label: const Text('ثبت پرداخت')),
+                    body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
+                      card(
+                        c,
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Chip(
+                                label: Text(a.isRec ? 'طلب' : 'بدهی'),
+                                backgroundColor: col.withValues(alpha: .12),
+                                side: BorderSide.none),
+                            const SizedBox(width: 8),
+                            Text(a.who, style: tt.titleMedium),
+                          ]),
+                          const SizedBox(height: 12),
+                          Text(a.settled ? 'تسویه‌شده ✅' : 'مانده: ${money(a.remaining)}',
+                              style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: col)),
+                          const SizedBox(height: 12),
+                          LinearProgressIndicator(
+                              value: (a.paid / a.principal).clamp(0.0, 1.0).toDouble(),
+                              minHeight: 10,
+                              color: col,
+                              borderRadius: BorderRadius.circular(8)),
+                          const SizedBox(height: 12),
+                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                            Text('مبلغ اولیه: ${money(a.principal)}'),
+                            Text('پرداخت‌شده: ${money(a.paid)}'),
+                          ]),
+                          const SizedBox(height: 8),
+                          if (a.opened != null) Text('تاریخ ثبت: ${fmtDate(a.opened!)}'),
+                          if (a.due != null) Text('سررسید: ${fmtDate(a.due!)}'),
+                          if (a.m['notes'] != null) Text('توضیحات: ${a.m['notes']}'),
+                        ]),
+                      ),
+                      sec(c, 'پرداخت‌ها'),
+                      if (txs.isEmpty) emptyBox('هنوز پرداختی ثبت نشده است'),
+                      ...txs.map((t) => card(
+                            c,
+                            Row(children: [
+                              Icon(Icons.payments_outlined, color: col),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Text(money((t['amount'] as num).toInt()),
+                                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                                Text(fmtDate(DateTime.parse('${t['transaction_date']}')), style: tt.bodySmall),
+                                if (t['note'] != null && '${t['note']}'.isNotEmpty) Text('${t['note']}', style: tt.bodySmall),
+                              ])),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  if (await confirm(c, 'حذف پرداخت', 'این پرداخت حذف و مانده دوباره محاسبه می‌شود.', ok: 'حذف')) {
+                                    if (!c.mounted) return;
+                                    final newRem = a.remaining + (t['amount'] as num).toInt();
+                                    await run(c, () async {
+                                      await sb.from('transactions').delete().eq('id', t['id']);
+                                      await sb.from('accounts').update({'status': newRem <= 0 ? 'settled' : 'open'}).eq('id', a.id);
+                                    });
+                                  }
+                                },
+                              ),
+                            ]),
+                          )),
+                    ]),
+                  );
+                },
+              );
+            }
+          }
+
+          class PaymentForm extends StatefulWidget {
+            final Acc a;
+            const PaymentForm(this.a, {super.key});
+            @override
+            State<PaymentForm> createState() => _PaymentFormState();
+          }
+
+          class _PaymentFormState extends State<PaymentForm> {
+            final amt = TextEditingController(), note = TextEditingController();
+            DateTime date = DateTime.now();
+            bool busy = false;
+
+            Future<void> save() async {
+              final a = widget.a;
+              final v = parseAmount(amt.text);
+              if (v == null || v <= 0) {
+                toast(context, 'مبلغ پرداخت معتبر نیست');
+                return;
+              }
+              if (v > a.remaining &&
+                  !await confirm(context, 'پرداخت بیش از مانده',
+                      'مبلغ واردشده از مانده (${money(a.remaining)}) بیشتر است. ثبت شود؟')) {
+                return;
+              }
+              if (!mounted) return;
+              setState(() => busy = true);
+              final ok = await run(context, () async {
+                await sb.from('transactions').insert({
+                  'user_id': uid(),
+                  'account_id': a.id,
+                  'type': 'payment',
+                  'amount': v,
+                  'transaction_date': ymd(date),
+                  'note': note.text.trim().isEmpty ? null : note.text.trim(),
+                });
+                await sb.from('accounts').update({'status': a.remaining - v <= 0 ? 'settled' : 'open'}).eq('id', a.id);
+              });
+              if (!mounted) return;
+              setState(() => busy = false);
+              if (ok) Navigator.pop(context);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final a = widget.a;
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('ثبت پرداخت', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text('مانده فعلی: ${money(a.remaining)}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amt,
+                    keyboardType: TextInputType.number,
+                    decoration: deco('مبلغ (${unit.value})', icon: Icons.payments_outlined).copyWith(
+                        suffix: TextButton(
+                            onPressed: () => amt.text = '${a.remaining}',
+                            child: const Text('پرداخت کامل'))),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(controller: note, decoration: deco('توضیحات (اختیاری)')),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.event),
+                    title: Text('تاریخ پرداخت: ${fmtDate(date)}'),
+                    onTap: () async {
+                      final d = await showDatePicker(
+                          context: context, initialDate: date, firstDate: DateTime(2000), lastDate: DateTime(2100));
+                      if (d != null) setState(() => date = d);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: FilledButton(onPressed: busy ? null : save, child: const Text('ثبت'))),
+                ]),
+              );
+            }
+          }
+
+          // ---------- account form ----------
+          void openAccountForm(BuildContext c, {Acc? edit, String? contactId}) {
+            Navigator.push(c, MaterialPageRoute(builder: (_) => AccountFormPage(edit: edit, contactId: contactId)));
+          }
+
+          class AccountFormPage extends StatefulWidget {
+            final Acc? edit;
+            final String? contactId;
+            const AccountFormPage({super.key, this.edit, this.contactId});
+            @override
+            State<AccountFormPage> createState() => _AccountFormPageState();
+          }
+
+          class _AccountFormPageState extends State<AccountFormPage> {
+            late String? cid;
+            late String type;
+            final newName = TextEditingController();
+            final title = TextEditingController();
+            final amount = TextEditingController();
+            final notes = TextEditingController();
+            late DateTime opened;
+            DateTime? due;
+            bool busy = false;
+
+            @override
+            void initState() {
+              super.initState();
+              final e = widget.edit;
+              cid = e?.contactId ?? widget.contactId ?? (store.contacts.isEmpty ? 'new' : null);
+              type = e == null ? 'receivable' : (e.isRec ? 'receivable' : 'payable');
+              title.text = e?.title ?? '';
+              amount.text = e == null ? '' : '${e.principal}';
+              notes.text = e == null ? '' : '${e.m['notes'] ?? ''}';
+              opened = e?.opened ?? DateTime.now();
+              due = e?.due;
+            }
+
+            Future<void> save() async {
+              final amt = parseAmount(amount.text);
+              if (cid == null) {
+                toast(context, 'شخص را انتخاب کنید');
+                return;
+              }
+              if (cid == 'new' && newName.text.trim().isEmpty) {
+                toast(context, 'نام شخص را وارد کنید');
+                return;
+              }
+              if (title.text.trim().isEmpty) {
+                toast(context, 'عنوان حساب را وارد کنید');
+                return;
+              }
+              if (amt == null || amt <= 0) {
+                toast(context, 'مبلغ اولیه معتبر نیست');
+                return;
+              }
+              final e = widget.edit;
+              if (e != null && amt < e.paid) {
+                toast(context, 'مبلغ اولیه نمی‌تواند کمتر از مجموع پرداخت‌های ثبت‌شده باشد');
+                return;
+              }
+              setState(() => busy = true);
+              final ok = await run(context, () async {
+                var contact = cid;
+                if (contact == 'new') {
+                  final r = await sb.from('contacts').insert({'user_id': uid(), 'name': newName.text.trim()}).select('id').single();
+                  contact = r['id'] as String;
+                }
+                final body = {
+                  'contact_id': contact,
+                  'type': type,
+                  'title': title.text.trim(),
+                  'principal_amount': amt,
+                  'opened_at': ymd(opened),
+                  'due_at': due == null ? null : ymd(due!),
+                  'notes': notes.text.trim().isEmpty ? null : notes.text.trim(),
+                };
+                if (e == null) {
+                  await sb.from('accounts').insert({...body, 'user_id': uid(), 'currency': unit.value, 'status': 'open'});
+                } else {
+                  await sb.from('accounts').update({...body, 'status': amt - e.paid <= 0 ? 'settled' : 'open'}).eq('id', e.id);
+                }
+              });
+              if (!mounted) return;
+              setState(() => busy = false);
+              if (ok) Navigator.pop(context);
+            }
+
+            Future<DateTime?> pick(DateTime init) => showDatePicker(
+                context: context, initialDate: init, firstDate: DateTime(2000), lastDate: DateTime(2100));
+
+            @override
+            Widget build(BuildContext context) {
+              final e = widget.edit;
+              return Scaffold(
+                appBar: AppBar(title: Text(e == null ? 'ثبت حساب جدید' : 'ویرایش حساب')),
+                body: ListView(padding: const EdgeInsets.all(16), children: [
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'receivable', label: Text('طلب (از او می‌گیرم)'), icon: Icon(Icons.south_west)),
+                      ButtonSegment(value: 'payable', label: Text('بدهی (به او می‌دهم)'), icon: Icon(Icons.north_east)),
+                    ],
+                    selected: {type},
+                    onSelectionChanged: (s) => setState(() => type = s.first),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: cid,
+                    decoration: deco('شخص', icon: Icons.person_outline),
+                    items: [
+                      ...store.contacts.map((p) => DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))),
+                      const DropdownMenuItem(value: 'new', child: Text('＋ شخص جدید')),
+                    ],
+                    onChanged: (v) => setState(() => cid = v),
+                  ),
+                  if (cid == 'new') ...[
+                    const SizedBox(height: 12),
+                    TextField(controller: newName, decoration: deco('نام شخص جدید')),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(controller: title, decoration: deco('عنوان (مثلاً وام خرید لپ‌تاپ)', icon: Icons.title)),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: amount,
+                      keyboardType: TextInputType.number,
+                      decoration: deco('مبلغ اولیه (${unit.value})', icon: Icons.payments_outlined)),
+                  const SizedBox(height: 12),
+                  card(
+                      context,
+                      Column(children: [
+                        ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.event),
+                            title: Text('تاریخ ثبت: ${fmtDate(opened)}'),
+                            onTap: () async {
+                              final d = await pick(opened);
+                              if (d != null) setState(() => opened = d);
+                            }),
+                        ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.alarm),
+                            title: Text(due == null ? 'سررسید: ندارد' : 'سررسید: ${fmtDate(due!)}'),
+                            trailing: due == null
+                                ? null
+                                : IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => due = null)),
+                            onTap: () async {
+                              final d = await pick(due ?? DateTime.now());
+                              if (d != null) setState(() => due = d);
+                            }),
+                      ])),
+                  TextField(controller: notes, maxLines: 3, decoration: deco('توضیحات (اختیاری)')),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                      height: 52,
+                      child: FilledButton(
+                          onPressed: busy ? null : save, child: Text(e == null ? 'ثبت حساب' : 'ذخیره تغییرات'))),
+                ]),
+              );
+            }
+          }
+
+          // ---------- backup & export ----------
+          Future<void> shareFile(String name, String content, String mime) async {
+            final d = await getTemporaryDirectory();
+            final f = File('${d.path}/$name');
+            await f.writeAsString(content);
+            await Share.shareXFiles([XFile(f.path, mimeType: mime)]);
+          }
+
+          String csvCell(Object? v) {
+            final s = '${v ?? ''}'.replaceAll('"', '""');
+            return '"$s"';
+          }
+
+          String buildCsv() {
+            final rows = <List<Object?>>[
+              ['شخص', 'عنوان', 'نوع', 'مبلغ اولیه', 'پرداخت‌شده', 'مانده', 'تاریخ ثبت', 'سررسید', 'وضعیت']
+            ];
+            for (final a in store.accs) {
+              rows.add([
+                a.who,
+                a.title,
+                a.isRec ? 'طلب' : 'بدهی',
+                a.principal,
+                a.paid,
+                a.remaining,
+                a.opened == null ? '' : ymd(a.opened!),
+                a.due == null ? '' : ymd(a.due!),
+                a.settled ? 'تسویه‌شده' : 'باز',
+              ]);
+            }
+            return '\uFEFF${rows.map((r) => r.map(csvCell).join(',')).join('\n')}';
+          }
+
+          class BackupPage extends StatefulWidget {
+            const BackupPage({super.key});
+            @override
+            State<BackupPage> createState() => _BackupPageState();
+          }
+
+          class _BackupPageState extends State<BackupPage> {
+            late Future<List<Map<String, dynamic>>> recs = _recs();
+            bool busy = false, auto = false;
+
+            Future<List<Map<String, dynamic>>> _recs() async {
+              final r = await sb.from('backup_records').select().order('created_at', ascending: false).limit(50);
+              return List<Map<String, dynamic>>.from(r);
+            }
+
+            @override
+            void initState() {
+              super.initState();
+              SharedPreferences.getInstance().then((p) {
+                if (mounted) setState(() => auto = p.getBool('auto_backup') ?? false);
+              });
+            }
+
+            Future<void> create() async {
+              setState(() => busy = true);
+              final ok = await run(context, () async {
+                await createBackup();
+                await pruneBackups(30);
+              }, reload: false);
+              if (!mounted) return;
+              setState(() {
+                busy = false;
+                recs = _recs();
+              });
+              if (ok) toast(context, 'نسخه پشتیبان ابری ساخته شد');
+            }
+
+            Future<void> restore(Map<String, dynamic> r) async {
+              setState(() => busy = true);
+              Map<String, dynamic>? j;
+              try {
+                j = await readBackup(r['storage_path'] as String);
+              } catch (e) {
+                if (mounted) toast(context, e is String ? e : 'دریافت نسخه پشتیبان ناموفق بود');
+              }
+              if (!mounted) return;
+              setState(() => busy = false);
+              if (j == null) return;
+              final d = j['data'] as Map<String, dynamic>;
+              final ok = await confirm(
+                  context,
+                  'بازیابی نسخه پشتیبان',
+                  'تاریخ: ${fmtDate(DateTime.parse(j['created_at'] as String).toLocal())}\n'
+                      'اشخاص: ${faDigits('${(d['contacts'] as List).length}')}  |  '
+                      'حساب‌ها: ${faDigits('${(d['accounts'] as List).length}')}  |  '
+                      'پرداخت‌ها: ${faDigits('${(d['transactions'] as List).length}')}\n\n'
+                      'داده‌های فعلی شما با این نسخه جایگزین می‌شود. پیش از آن یک نسخهٔ پشتیبان از وضعیت فعلی ساخته می‌شود.',
+                  ok: 'جایگزین کن');
+              if (!ok || !mounted) return;
+              setState(() => busy = true);
+              final done = await run(context, () async {
+                await createBackup();
+                await sb.rpc('restore_user_data', params: {'payload': d});
+              });
+              if (!mounted) return;
+              setState(() {
+                busy = false;
+                recs = _recs();
+              });
+              if (done) toast(context, 'بازیابی انجام شد');
+            }
+
+            Future<void> remove(Map<String, dynamic> r) async {
+              if (!await confirm(context, 'حذف نسخه پشتیبان', 'این نسخه برای همیشه حذف می‌شود.', ok: 'حذف')) return;
+              if (!mounted) return;
+              await run(context, () async {
+                await sb.storage.from('backups').remove([r['storage_path'] as String]);
+                await sb.from('backup_records').delete().eq('id', r['id']);
+              }, reload: false);
+              if (mounted) setState(() => recs = _recs());
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final tt = Theme.of(context).textTheme;
+              return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), children: [
+                Text('پشتیبان‌گیری و خروجی', style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                card(
+                    context,
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('نسخهٔ ابری در فضای خصوصی شما ذخیره می‌شود و فقط خودتان به آن دسترسی دارید.'),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: FilledButton.icon(
+                              onPressed: busy ? null : create,
+                              icon: const Icon(Icons.cloud_upload_outlined),
+                              label: const Text('ایجاد نسخه پشتیبان ابری'))),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('پشتیبان خودکار روزانه'),
+                        subtitle: const Text('هنگام باز کردن برنامه، اگر بیش از ۲۴ ساعت از آخرین نسخه گذشته باشد؛ ۱۰ نسخه نگه داشته می‌شود'),
+                        value: auto,
+                        onChanged: (v) async {
+                          final p = await SharedPreferences.getInstance();
+                          await p.setBool('auto_backup', v);
+                          setState(() => auto = v);
+                        },
+                      ),
+                    ])),
+                card(
+                    context,
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('خروجی قابل حمل (رمزگذاری‌نشده است؛ با احتیاط به اشتراک بگذارید)'),
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed: busy
+                                ? null
+                                : () async {
+                                    await run(context, () async {
+                                      final snap = await snapshot();
+                                      await shareFile('hesabyar_backup.json', jsonEncode(snap), 'application/json');
+                                    }, reload: false);
+                                  },
+                            icon: const Icon(Icons.data_object),
+                            label: const Text('JSON')),
+                        OutlinedButton.icon(
+                            onPressed: busy
+                                ? null
+                                : () => run(context, () => shareFile('hesabyar_report.csv', buildCsv(), 'text/csv'), reload: false),
+                            icon: const Icon(Icons.table_chart_outlined),
+                            label: const Text('CSV (اکسل)')),
+                      ]),
+                    ])),
+                if (busy) const LinearProgressIndicator(),
+                sec(context, 'نسخه‌های ابری'),
+                FutureBuilder<List<Map<String, dynamic>>>(
+                  future: recs,
+                  builder: (c, s) {
+                    if (s.connectionState != ConnectionState.done) {
+                      return const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()));
+                    }
+                    if (s.hasError) return emptyBox('دریافت فهرست نسخه‌ها ممکن نشد (اتصال را بررسی کنید)');
+                    final list = s.data ?? [];
+                    if (list.isEmpty) return emptyBox('هنوز نسخه پشتیبانی ساخته نشده است');
+                    return Column(
+                        children: list.map((r) {
+                      final kb = ((r['file_size'] as num?) ?? 0) / 1024;
+                      return card(
+                        c,
+                        Row(children: [
+                          const Icon(Icons.backup_outlined),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(fmtDate(DateTime.parse(r['created_at'] as String).toLocal()),
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text('${faDigits(kb.toStringAsFixed(1))} کیلوبایت', style: tt.bodySmall),
+                          ])),
+                          PopupMenuButton<String>(
+                            onSelected: (v) => v == 'restore' ? restore(r) : remove(r),
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'restore', child: Text('بازیابی')),
+                              PopupMenuItem(value: 'delete', child: Text('حذف')),
+                            ],
+                          ),
+                        ]),
+                      );
+                    }).toList());
+                  },
+                ),
+              ]);
+            }
+          }
+
+          // ---------- settings ----------
+          class SettingsPage extends StatelessWidget {
+            const SettingsPage({super.key});
+
+            Future<void> _setUnit(BuildContext c, String u) async {
+              await run(c, () async {
+                await sb.from('profiles').update({'currency_unit': u}).eq('user_id', uid());
+                unit.value = u;
+              }, reload: false);
+            }
+
+            Future<String?> _ask(BuildContext c, String title, String label, {bool pass = false, String init = ''}) async {
+              final t = TextEditingController(text: init);
+              final ok = await showDialog<bool>(
+                  context: c,
+                  builder: (ctx) => AlertDialog(
+                        title: Text(title),
+                        content: TextField(controller: t, obscureText: pass, decoration: deco(label)),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('انصراف')),
+                          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('ذخیره')),
+                        ],
+                      ));
+              return ok == true ? t.text.trim() : null;
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit]),
+                builder: (c, _) {
+                  final email = sb.auth.currentUser?.email ?? '';
+                  return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), children: [
+                    Text('تنظیمات', style: Theme.of(c).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    card(
+                        c,
+                        Row(children: [
+                          const CircleAvatar(child: Icon(Icons.person)),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(profileName.isEmpty ? 'بدون نام' : profileName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text(email, textDirection: TextDirection.ltr),
+                          ])),
+                          IconButton(
+                              icon: const Icon(Icons.edit_outlined),
+                              onPressed: () async {
+                                final n = await _ask(c, 'نام نمایشی', 'نام', init: profileName);
+                                if (n == null || !c.mounted) return;
+                                await run(c, () async {
+                                  await sb.from('profiles').update({'display_name': n}).eq('user_id', uid());
+                                  profileName = n;
+                                }, reload: false);
+                                store.refreshUI();
+                              }),
+                        ])),
+                    card(
+                        c,
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Text('واحد پول', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text('فقط واحد نمایش تغییر می‌کند و تبدیل ارز انجام نمی‌شود.'),
+                          const SizedBox(height: 8),
+                          Wrap(spacing: 8, children: [
+                            for (final u in ['تومان', 'ریال'])
+                              ChoiceChip(label: Text(u), selected: unit.value == u, onSelected: (_) => _setUnit(c, u)),
+                            ActionChip(
+                                label: Text(['تومان', 'ریال'].contains(unit.value) ? 'واحد دیگر…' : unit.value),
+                                onPressed: () async {
+                                  final u = await _ask(c, 'واحد پول دلخواه', 'مثلاً دلار');
+                                  if (u != null && u.isNotEmpty && c.mounted) await _setUnit(c, u);
+                                }),
+                          ]),
+                        ])),
+                    card(
+                        c,
+                        Column(children: [
+                          ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.lock_reset),
+                              title: const Text('تغییر رمز عبور'),
+                              onTap: () async {
+                                final p = await _ask(c, 'رمز عبور جدید', 'حداقل ۸ کاراکتر', pass: true);
+                                if (p == null || !c.mounted) return;
+                                if (p.length < 8) {
+                                  toast(c, 'رمز عبور باید حداقل ۸ کاراکتر باشد');
+                                  return;
+                                }
+                                final ok = await run(c, () async {
+                                  await sb.auth.updateUser(UserAttributes(password: p));
+                                }, reload: false);
+                                if (ok && c.mounted) toast(c, 'رمز عبور تغییر کرد');
+                              }),
+                          ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.logout),
+                              title: const Text('خروج از حساب'),
+                              onTap: () async {
+                                await store.clear();
+                                await sb.auth.signOut();
+                              }),
+                          ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.delete_forever, color: cPay),
+                              title: const Text('حذف حساب کاربری', style: TextStyle(color: cPay)),
+                              onTap: () async {
+                                final ok = await confirm(c, 'حذف حساب کاربری',
+                                    'همهٔ اشخاص، حساب‌ها، پرداخت‌ها و نسخه‌های پشتیبان شما برای همیشه حذف می‌شود و قابل بازگشت نیست.',
+                                    ok: 'حذف دائمی');
+                                if (!ok || !c.mounted) return;
+                                final done = await run(c, () async {
+                                  final r = await sb.from('backup_records').select('storage_path');
+                                  final paths = List<Map<String, dynamic>>.from(r).map((e) => e['storage_path'] as String).toList();
+                                  if (paths.isNotEmpty) await sb.storage.from('backups').remove(paths);
+                                  await sb.rpc('delete_my_account');
+                                }, reload: false);
+                                if (done) {
+                                  await store.clear();
+                                  try {
+                                    await sb.auth.signOut();
+                                  } catch (_) {}
+                                }
+                              }),
+                        ])),
+                  ]);
+                },
+              );
+            }
+          }
+          SCREENS_EOF
+          cat > supabase/schema.sql <<'SQL_EOF'
+          -- HesabYar: Supabase schema + RLS. Run once in Supabase -> SQL Editor.
+          create extension if not exists pgcrypto;
+
+          create table if not exists public.profiles (
+            user_id uuid primary key references auth.users(id) on delete cascade,
+            display_name text,
+            currency_unit text not null default 'تومان',
+            language text not null default 'fa',
+            created_at timestamptz not null default now()
+          );
+
+          create table if not exists public.contacts (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            name text not null,
+            phone text,
+            notes text,
+            archived_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+          );
+
+          create table if not exists public.accounts (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            contact_id uuid not null references public.contacts(id) on delete cascade,
+            type text not null check (type in ('receivable','payable')),
+            title text not null,
+            principal_amount bigint not null check (principal_amount > 0),
+            currency text not null default 'تومان',
+            opened_at date not null default current_date,
+            due_at date,
+            notes text,
+            status text not null default 'open' check (status in ('open','settled')),
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+          );
+
+          create table if not exists public.transactions (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            account_id uuid not null references public.accounts(id) on delete cascade,
+            type text not null default 'payment' check (type in ('payment')),
+            amount bigint not null check (amount > 0),
+            transaction_date date not null default current_date,
+            note text,
+            created_at timestamptz not null default now()
+          );
+
+          create table if not exists public.backup_records (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            storage_path text not null,
+            format_version int not null default 1,
+            file_size bigint,
+            checksum text,
+            status text not null default 'ok',
+            created_at timestamptz not null default now()
+          );
+
+          create index if not exists contacts_user_idx on public.contacts(user_id);
+          create index if not exists accounts_user_idx on public.accounts(user_id);
+          create index if not exists accounts_contact_idx on public.accounts(contact_id);
+          create index if not exists tx_user_idx on public.transactions(user_id);
+          create index if not exists tx_account_idx on public.transactions(account_id);
+          create index if not exists backup_user_idx on public.backup_records(user_id, created_at desc);
+
+          create or replace function public.set_updated_at() returns trigger
+          language plpgsql as $$
+          begin new.updated_at = now(); return new; end $$;
+
+          drop trigger if exists contacts_upd on public.contacts;
+          create trigger contacts_upd before update on public.contacts
+            for each row execute function public.set_updated_at();
+          drop trigger if exists accounts_upd on public.accounts;
+          create trigger accounts_upd before update on public.accounts
+            for each row execute function public.set_updated_at();
+
+          create or replace function public.handle_new_user() returns trigger
+          language plpgsql security definer set search_path = public as $$
+          begin
+            insert into public.profiles(user_id) values (new.id) on conflict do nothing;
+            return new;
+          end $$;
+          drop trigger if exists on_auth_user_created on auth.users;
+          create trigger on_auth_user_created after insert on auth.users
+            for each row execute function public.handle_new_user();
+
+          -- Row Level Security
+          alter table public.profiles enable row level security;
+          alter table public.contacts enable row level security;
+          alter table public.accounts enable row level security;
+          alter table public.transactions enable row level security;
+          alter table public.backup_records enable row level security;
+
+          drop policy if exists own_profiles on public.profiles;
+          create policy own_profiles on public.profiles for all to authenticated
+            using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+          drop policy if exists own_contacts on public.contacts;
+          create policy own_contacts on public.contacts for all to authenticated
+            using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+          drop policy if exists own_accounts on public.accounts;
+          create policy own_accounts on public.accounts for all to authenticated
+            using (user_id = auth.uid())
+            with check (user_id = auth.uid() and exists (
+              select 1 from public.contacts c where c.id = contact_id and c.user_id = auth.uid()));
+
+          drop policy if exists own_transactions on public.transactions;
+          create policy own_transactions on public.transactions for all to authenticated
+            using (user_id = auth.uid())
+            with check (user_id = auth.uid() and exists (
+              select 1 from public.accounts a where a.id = account_id and a.user_id = auth.uid()));
+
+          drop policy if exists own_backup_records on public.backup_records;
+          create policy own_backup_records on public.backup_records for all to authenticated
+            using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+          -- Atomic restore (runs as the caller, so RLS still applies)
+          create or replace function public.restore_user_data(payload jsonb) returns void
+          language plpgsql security invoker set search_path = public as $$
+          begin
+            delete from public.contacts where user_id = auth.uid();
+
+            insert into public.contacts(id, user_id, name, phone, notes, archived_at, created_at, updated_at)
+            select (c->>'id')::uuid, auth.uid(), c->>'name', c->>'phone', c->>'notes',
+                   (c->>'archived_at')::timestamptz,
+                   coalesce((c->>'created_at')::timestamptz, now()),
+                   coalesce((c->>'updated_at')::timestamptz, now())
+            from jsonb_array_elements(coalesce(payload->'contacts', '[]'::jsonb)) c;
+
+            insert into public.accounts(id, user_id, contact_id, type, title, principal_amount, currency,
+                                        opened_at, due_at, notes, status, created_at, updated_at)
+            select (a->>'id')::uuid, auth.uid(), (a->>'contact_id')::uuid, a->>'type', a->>'title',
+                   (a->>'principal_amount')::bigint, coalesce(a->>'currency', 'تومان'),
+                   coalesce((a->>'opened_at')::date, current_date), (a->>'due_at')::date,
+                   a->>'notes', coalesce(a->>'status', 'open'),
+                   coalesce((a->>'created_at')::timestamptz, now()),
+                   coalesce((a->>'updated_at')::timestamptz, now())
+            from jsonb_array_elements(coalesce(payload->'accounts', '[]'::jsonb)) a;
+
+            insert into public.transactions(id, user_id, account_id, type, amount, transaction_date, note, created_at)
+            select (t->>'id')::uuid, auth.uid(), (t->>'account_id')::uuid, coalesce(t->>'type', 'payment'),
+                   (t->>'amount')::bigint, coalesce((t->>'transaction_date')::date, current_date),
+                   t->>'note', coalesce((t->>'created_at')::timestamptz, now())
+            from jsonb_array_elements(coalesce(payload->'transactions', '[]'::jsonb)) t;
+          end $$;
+
+          create or replace function public.delete_my_account() returns void
+          language plpgsql security definer set search_path = public, auth as $$
+          begin
+            delete from auth.users where id = auth.uid();
+          end $$;
+
+          revoke all on function public.restore_user_data(jsonb) from public, anon;
+          revoke all on function public.delete_my_account() from public, anon;
+          grant execute on function public.restore_user_data(jsonb) to authenticated;
+          grant execute on function public.delete_my_account() to authenticated;
+
+          -- Private storage bucket for backups: each user can only touch the folder named after their user id
+          insert into storage.buckets (id, name, public) values ('backups', 'backups', false)
+            on conflict (id) do nothing;
+
+          drop policy if exists backups_select_own on storage.objects;
+          create policy backups_select_own on storage.objects for select to authenticated
+            using (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text);
+          drop policy if exists backups_insert_own on storage.objects;
+          create policy backups_insert_own on storage.objects for insert to authenticated
+            with check (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text);
+          drop policy if exists backups_delete_own on storage.objects;
+          create policy backups_delete_own on storage.objects for delete to authenticated
+            using (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text);
+          SQL_EOF
+
+          MF=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<manifest xmlns:android="http://schemas.android.com/apk/res/android">#&\n    <uses-permission android:name="android.permission.INTERNET"/>#' "$MF"
+          sed -i 's/android:label="hesabyar"/android:label="حساب‌یار"/' "$MF"
+          grep -q "android.permission.INTERNET" "$MF" || { echo "INTERNET permission was not added to the manifest"; exit 1; }
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hesabyar-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload Supabase schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-schema
+          path: supabase/schema.sql
