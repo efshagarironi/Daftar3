@@ -4,6 +4,7 @@ name: Build HesabYar APK
 # مسیر فایل در ریپازیتوری: .github/workflows/main.yml
 # پیش‌نیاز: در Settings > Secrets and variables > Actions دو Secret بسازید:
 #   SUPABASE_URL  و  SUPABASE_ANON_KEY
+# کلید امضا داخل همین فایل است؛ نیازی به Secret اضافه نیست.
 # (فقط anon key؛ هرگز service_role را اینجا نگذارید)
 
 on:
@@ -2303,6 +2304,62 @@ jobs:
           sed -i 's/android:label="hesabyar"/android:label="حساب‌یار"/' "$MF"
           grep -q "android.permission.INTERNET" "$MF" || { echo "INTERNET permission was not added to the manifest"; exit 1; }
 
+      - name: Configure release signing in Gradle
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_EOF'
+          import os, re
+          kts = 'android/app/build.gradle.kts'
+          grv = 'android/app/build.gradle'
+          if os.path.exists(kts):
+              f = kts
+              t = open(f, encoding='utf-8').read()
+              block = """    signingConfigs {
+                  create("release") {
+                      storeFile = file(System.getenv("KEYSTORE_PATH") ?: "release.jks")
+                      storePassword = System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias = System.getenv("KEY_ALIAS")
+                      keyPassword = System.getenv("KEYSTORE_PASSWORD")
+                  }
+              }
+
+              buildTypes {"""
+              t = t.replace("    buildTypes {", block, 1)
+              t = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("debug"\)',
+                         'signingConfig = signingConfigs.getByName("release")', t)
+          else:
+              f = grv
+              t = open(f, encoding='utf-8').read()
+              block = """    signingConfigs {
+                  release {
+                      storeFile file(System.getenv("KEYSTORE_PATH") ?: "release.jks")
+                      storePassword System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("KEY_ALIAS")
+                      keyPassword System.getenv("KEYSTORE_PASSWORD")
+                  }
+              }
+
+              buildTypes {"""
+              t = t.replace("    buildTypes {", block, 1)
+              t = re.sub(r'signingConfig\s+signingConfigs\.debug', 'signingConfig signingConfigs.release', t)
+          assert 'KEYSTORE_PATH' in t and 'release' in t, 'signing patch failed'
+          open(f, 'w', encoding='utf-8').write(t)
+          print('patched', f)
+          PY_EOF
+          grep -n "signingConfig" android/app/build.gradle* || true
+
+      - name: Prepare signing keystore
+        run: |
+          set -euo pipefail
+          # کلید امضای ثابت برنامه (داخل همین فایل). تا این کلید عوض نشود، هر نسخهٔ جدید روی قبلی نصب می‌شود.
+          KS="$RUNNER_TEMP/release.jks"
+          echo "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" | base64 -d > "$KS"
+          {
+            echo "KEYSTORE_PATH=$KS"
+            echo "KEYSTORE_PASSWORD=75307624c6a3b389b905023d"
+            echo "KEY_ALIAS=hesabyar"
+          } >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -2312,6 +2369,8 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           flutter build apk --release \
+            --build-name=1.0.${{ github.run_number }} \
+            --build-number=${{ github.run_number }} \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
 
