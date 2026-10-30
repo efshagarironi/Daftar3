@@ -361,9 +361,13 @@ jobs:
           class Store extends ChangeNotifier {
             List<Map<String, dynamic>> rawAccs = [];
             List<Map<String, dynamic>> contacts = [];
+            List<Map<String, dynamic>> rawLoans = [];
+            List<Map<String, dynamic>> rawCheques = [];
             bool loading = false;
             bool offline = false;
             List<Acc> get accs => rawAccs.map(Acc.new).toList();
+            List<Loan> get loans => rawLoans.map(Loan.new).toList();
+            List<Cheque> get cheques => rawCheques.map(Cheque.new).toList();
 
             void refreshUI() => notifyListeners();
 
@@ -384,8 +388,28 @@ jobs:
                     .order('created_at', ascending: false);
                 contacts = List<Map<String, dynamic>>.from(c);
                 rawAccs = List<Map<String, dynamic>>.from(a);
+                // وام و چک: اگر جدول‌ها هنوز در Supabase ساخته نشده باشند، بقیهٔ برنامه عادی کار می‌کند
+                try {
+                  final l = await sb
+                      .from('loans')
+                      .select('*, loan_installments(*)')
+                      .order('created_at', ascending: false);
+                  rawLoans = List<Map<String, dynamic>>.from(l);
+                } catch (_) {
+                  rawLoans = [];
+                }
+                try {
+                  final h = await sb
+                      .from('cheques')
+                      .select('*, contacts(name)')
+                      .order('created_at', ascending: false);
+                  rawCheques = List<Map<String, dynamic>>.from(h);
+                } catch (_) {
+                  rawCheques = [];
+                }
                 offline = false;
-                await p.setString(key, jsonEncode({'c': contacts, 'a': rawAccs}));
+                await p.setString(
+                    key, jsonEncode({'c': contacts, 'a': rawAccs, 'l': rawLoans, 'h': rawCheques}));
               } catch (e) {
                 offline = true;
                 final s = p.getString(key);
@@ -393,6 +417,8 @@ jobs:
                   final j = jsonDecode(s);
                   contacts = List<Map<String, dynamic>>.from(j['c']);
                   rawAccs = List<Map<String, dynamic>>.from(j['a']);
+                  rawLoans = List<Map<String, dynamic>>.from(j['l'] ?? []);
+                  rawCheques = List<Map<String, dynamic>>.from(j['h'] ?? []);
                 }
               }
               loading = false;
@@ -401,6 +427,8 @@ jobs:
 
             Future<void> clear() async {
               rawAccs = [];
+              rawLoans = [];
+              rawCheques = [];
               contacts = [];
               final p = await SharedPreferences.getInstance();
               for (final k in p.getKeys().where((k) => k.startsWith('cache_')).toList()) {
@@ -440,11 +468,22 @@ jobs:
             return out;
           }
 
+          Future<List<Map<String, dynamic>>> fetchAllSafe(String table) async {
+            try {
+              return await fetchAll(table);
+            } catch (_) {
+              return [];
+            }
+          }
+
           Future<Map<String, dynamic>> snapshot() async {
             final data = {
               'contacts': await fetchAll('contacts'),
               'accounts': await fetchAll('accounts'),
               'transactions': await fetchAll('transactions'),
+              'loans': await fetchAllSafe('loans'),
+              'loan_installments': await fetchAllSafe('loan_installments'),
+              'cheques': await fetchAllSafe('cheques'),
             };
             final checksum = sha256.convert(utf8.encode(jsonEncode(data))).toString();
             return {
@@ -1032,17 +1071,9 @@ jobs:
           }
 
           class _DashboardPageState extends State<DashboardPage> {
-            String q = '', sort = 'amount';
             bool saving = false;
-            final search = TextEditingController();
 
             static const _wd = ['دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه', 'شنبه', 'یکشنبه'];
-
-            @override
-            void dispose() {
-              search.dispose();
-              super.dispose();
-            }
 
             String _today() {
               final n = DateTime.now();
@@ -1052,10 +1083,11 @@ jobs:
             void _open(BuildContext c, Widget page) =>
                 Navigator.push(c, MaterialPageRoute(builder: (_) => page));
 
+            // لیست طلب‌ها یا بدهی‌ها
             void _list(BuildContext c, String type) => _open(
                 c,
                 Scaffold(
-                  appBar: AppBar(title: Text(type == 'rec' ? 'طلب‌ها' : 'بدهی‌ها')),
+                  appBar: AppBar(title: Text(type == 'rec' ? 'طلبکاری‌ها' : 'بدهکاری‌ها')),
                   floatingActionButton: FloatingActionButton.extended(
                       onPressed: () => openAccountForm(c),
                       icon: const Icon(Icons.add),
@@ -1075,7 +1107,64 @@ jobs:
               if (ok) toast(context, 'نسخه پشتیبان ابری ساخته شد');
             }
 
-            void _notes(BuildContext c, List<Acc> due) {
+            // یادآوری‌ها: سررسید حساب‌ها، اقساط وام و چک‌ها (تا ۱۴ روز آینده و معوق)
+            List<Widget> _noteItems(BuildContext c) {
+              final today = _today0();
+              bool soon(DateTime? d) => d != null && d.difference(today).inDays <= 14;
+              final items = <Widget>[];
+              final dueAccs = store.accs.where((a) => !a.settled && soon(a.due)).toList()
+                ..sort((x, y) => x.due!.compareTo(y.due!));
+              for (final a in dueAccs) {
+                items.add(AccTile(a));
+              }
+              for (final l in store.loans) {
+                final i = l.next;
+                if (i != null && soon(Loan.dueOf(i))) {
+                  final isLate = Loan.dueOf(i)!.isBefore(today);
+                  items.add(card(
+                    c,
+                    Row(children: [
+                      Icon(Icons.event_note, color: isLate ? cPay : cLoan),
+                      const SizedBox(width: 12),
+                      Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('قسط ${faDigits('${i['number']}')} — ${l.title}',
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text('${isLate ? 'معوق از' : 'سررسید'}: ${fmtDate(Loan.dueOf(i)!)}',
+                            style: TextStyle(fontSize: 12, color: isLate ? cPay : null)),
+                      ])),
+                      Text(money(Loan.amt(i)), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ]),
+                    onTap: () => _open(c, LoanDetailPage(l.id)),
+                  ));
+                }
+              }
+              for (final x in store.cheques) {
+                if (x.pending && !x.guarantee && soon(x.due)) {
+                  items.add(card(
+                    c,
+                    Row(children: [
+                      Icon(Icons.receipt_long, color: x.overdue ? cPay : cWarn),
+                      const SizedBox(width: 12),
+                      Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(
+                            '${x.received ? 'چک دریافتی' : 'چک پرداختی'}${x.who.isEmpty ? '' : ' — ${x.who}'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        Text('${x.overdue ? 'سررسید گذشته' : 'سررسید'}: ${fmtDate(x.due!)}',
+                            style: TextStyle(fontSize: 12, color: x.overdue ? cPay : null)),
+                      ])),
+                      Text(money(x.amount), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ]),
+                    onTap: () => _open(c, ChequeDetailPage(x.id)),
+                  ));
+                }
+              }
+              return items;
+            }
+
+            void _notes(BuildContext c, List<Widget> items) {
               showModalBottomSheet(
                 context: c,
                 isScrollControlled: true,
@@ -1090,8 +1179,8 @@ jobs:
                         Text('پیام‌ها و یادآوری‌ها',
                             style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
-                        if (due.isEmpty) emptyBox('پیام جدیدی ندارید ✨'),
-                        ...due.map((a) => AccTile(a)),
+                        if (items.isEmpty) emptyBox('پیام جدیدی ندارید ✨'),
+                        ...items,
                       ],
                     ),
                   ),
@@ -1113,24 +1202,33 @@ jobs:
                 );
 
             Widget _hero(BuildContext c, int rec, int pay, int net) {
-              Widget side(String label, int v, IconData ic, Color tile, Color border) => Expanded(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Container(
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                            color: tile,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: border, width: 1.5)),
-                        child: Icon(ic, color: Colors.white, size: 24),
+              Widget side(String label, int v, IconData ic, Color tile, Color border, VoidCallback f) =>
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: f,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                                color: tile,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: border, width: 1.5)),
+                            child: Icon(ic, color: Colors.white, size: 24),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                          const SizedBox(height: 6),
+                          Text(v == 0 ? '۰' : faDigits(group(v)),
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                          Text(unit.value, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        ]),
                       ),
-                      const SizedBox(height: 10),
-                      Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
-                      const SizedBox(height: 6),
-                      Text(v == 0 ? '۰' : faDigits(group(v)),
-                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                      Text(unit.value, style: const TextStyle(color: Colors.white, fontSize: 12)),
-                    ]),
+                    ),
                   );
               final msg = net > 0
                   ? '${money(net)} طلبکار هستید'
@@ -1147,7 +1245,7 @@ jobs:
                 child: Column(children: [
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     side('طلبکاری‌های من', rec, Icons.trending_up, _kBlue.withValues(alpha: .55),
-                        const Color(0xFF6FB0F5)),
+                        const Color(0xFF6FB0F5), () => _list(c, 'rec')),
                     Container(
                       width: 86,
                       height: 86,
@@ -1159,7 +1257,7 @@ jobs:
                           color: Colors.white, size: 30),
                     ),
                     side('بدهکاری‌های من', pay, Icons.trending_down, const Color(0xFF8A4E8C),
-                        const Color(0xFFD63864)),
+                        const Color(0xFFD63864), () => _list(c, 'pay')),
                   ]),
                   const SizedBox(height: 12),
                   Text(msg, style: const TextStyle(color: Colors.white, fontSize: 14)),
@@ -1187,42 +1285,14 @@ jobs:
               return ListenableBuilder(
                 listenable: Listenable.merge([store, unit, calendarMode]),
                 builder: (c, _) {
-                  final accs = store.accs;
-                  final open = accs.where((a) => !a.settled).toList();
+                  final open = store.accs.where((a) => !a.settled).toList();
                   final rec = open.where((a) => a.isRec).fold<int>(0, (s, a) => s + a.remaining);
                   final pay = open.where((a) => !a.isRec).fold<int>(0, (s, a) => s + a.remaining);
                   final net = rec - pay;
-                  final now = DateTime.now();
-                  final today = DateTime(now.year, now.month, now.day);
-                  final dueList = open
-                      .where((a) => a.due != null && a.due!.difference(today).inDays <= 14)
-                      .toList()
-                    ..sort((x, y) => x.due!.compareTo(y.due!));
-                  final recent = <Map<String, dynamic>>[];
-                  for (final a in accs) {
-                    for (final t in a.txs) {
-                      recent.add({...Map<String, dynamic>.from(t as Map), 'acc': a});
-                    }
-                  }
-                  recent.sort((x, y) =>
-                      '${y['transaction_date']}'.compareTo('${x['transaction_date']}'));
+                  final notes = _noteItems(c);
 
-                  final rows = store.contacts
-                      .where((p) => q.isEmpty || '${p['name']}'.contains(q))
-                      .map((p) => MapEntry(p, netOf('${p['id']}')))
-                      .toList();
-                  rows.sort((x, y) {
-                    switch (sort) {
-                      case 'name':
-                        return '${x.key['name']}'.compareTo('${y.key['name']}');
-                      case 'rec':
-                        return y.value.compareTo(x.value);
-                      case 'pay':
-                        return x.value.compareTo(y.value);
-                      default:
-                        return y.value.abs().compareTo(x.value.abs());
-                    }
-                  });
+                  final rows = store.contacts.map((p) => MapEntry(p, netOf('${p['id']}'))).toList()
+                    ..sort((x, y) => y.value.abs().compareTo(x.value.abs()));
 
                   final tt = Theme.of(c).textTheme;
                   return RefreshIndicator(
@@ -1231,7 +1301,6 @@ jobs:
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                       children: [
-                        // نوار بالا: تاریخ، پیام‌ها، ذخیرهٔ آنلاین
                         Row(children: [
                           Container(
                             width: 44,
@@ -1252,7 +1321,7 @@ jobs:
                               'پیام جدید',
                               Stack(clipBehavior: Clip.none, children: [
                                 const Icon(Icons.notifications_none_rounded, size: 22),
-                                if (dueList.isNotEmpty)
+                                if (notes.isNotEmpty)
                                   Positioned(
                                       top: -1,
                                       right: -1,
@@ -1262,7 +1331,7 @@ jobs:
                                           decoration: const BoxDecoration(
                                               color: Color(0xFFE5484D), shape: BoxShape.circle))),
                               ]),
-                              () => _notes(c, dueList)),
+                              () => _notes(c, notes)),
                           const SizedBox(width: 8),
                           _topBtn(
                               c,
@@ -1278,65 +1347,11 @@ jobs:
                         _hero(c, rec, pay, net),
                         const SizedBox(height: 14),
                         Row(children: [
-                          _big('طلب‌ها', _kIndigo, () => _list(c, 'rec')),
+                          _big('وام‌ها', _kIndigo, () => _open(c, const LoansPage())),
                           const SizedBox(width: 14),
-                          _big('بدهی‌ها', _kRose, () => _list(c, 'pay')),
+                          _big('چک‌ها', _kRose, () => _open(c, const ChequesPage())),
                         ]),
                         const SizedBox(height: 18),
-                        // لیست طرف حساب‌ها
-                        Row(children: [
-                          Text('لیست طرف حساب‌ها',
-                              style: tt.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed: () => run(c,
-                                () => shareFile('hesabyar_report.csv', buildCsv(), 'text/csv'),
-                                reload: false),
-                            icon: const Icon(Icons.edit_note_rounded),
-                            label: const Text('گزارش‌گیری', style: TextStyle(fontSize: 12)),
-                          ),
-                          PopupMenuButton<String>(
-                            onSelected: (v) => setState(() => sort = v),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'amount', child: Text('بیشترین مانده')),
-                              PopupMenuItem(value: 'name', child: Text('نام (الفبا)')),
-                              PopupMenuItem(value: 'rec', child: Text('طلب‌ها اول')),
-                              PopupMenuItem(value: 'pay', child: Text('بدهی‌ها اول')),
-                            ],
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.sort_rounded, size: 22),
-                                SizedBox(width: 4),
-                                Text('مرتب‌سازی', style: TextStyle(fontSize: 12)),
-                              ]),
-                            ),
-                          ),
-                        ]),
-                        const SizedBox(height: 6),
-                        Row(children: [
-                          Expanded(
-                            child: TextField(
-                              controller: search,
-                              onChanged: (v) => setState(() => q = v.trim()),
-                              decoration: deco('جستجوی طرف حساب').copyWith(
-                                suffixIcon: q.isEmpty
-                                    ? null
-                                    : IconButton(
-                                        icon: const Icon(Icons.close),
-                                        onPressed: () {
-                                          search.clear();
-                                          setState(() => q = '');
-                                        }),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton.filled(
-                              icon: const Icon(Icons.person_add_alt_1),
-                              onPressed: () => personDialog(c)),
-                        ]),
-                        const SizedBox(height: 12),
                         if (rows.isEmpty) emptyBox('شخصی ثبت نشده است'),
                         ...rows.map((e) {
                           final p = e.key, n = e.value;
@@ -1365,8 +1380,7 @@ jobs:
                               Container(
                                 width: 48,
                                 height: 48,
-                                decoration: BoxDecoration(
-                                    color: col, borderRadius: BorderRadius.circular(14)),
+                                decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(14)),
                                 child: Icon(
                                     n > 0
                                         ? Icons.trending_up
@@ -1375,29 +1389,6 @@ jobs:
                               ),
                             ]),
                             onTap: () => _open(c, PersonPage('${p['id']}')),
-                          );
-                        }),
-                        sec(c, 'سررسیدهای نزدیک'),
-                        if (dueList.isEmpty) card(c, const Text('سررسید نزدیکی ندارید ✨')),
-                        ...dueList.take(5).map((a) => AccTile(a)),
-                        sec(c, 'آخرین پرداخت‌ها'),
-                        if (recent.isEmpty) card(c, const Text('هنوز پرداختی ثبت نشده است')),
-                        ...recent.take(5).map((t) {
-                          final a = t['acc'] as Acc;
-                          return card(
-                            c,
-                            Row(children: [
-                              Icon(Icons.payments_outlined, color: accColor(a)),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text('${a.who} — ${a.title}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                                Text(fmtDate(DateTime.parse('${t['transaction_date']}')), style: tt.bodySmall),
-                              ])),
-                              Text(money((t['amount'] as num).toInt()),
-                                  style: const TextStyle(fontWeight: FontWeight.bold)),
-                            ]),
-                            onTap: () => _open(c, AccountPage(a.id)),
                           );
                         }),
                       ],
@@ -2077,6 +2068,1145 @@ jobs:
             }
           }
 
+          // ---------- وام‌ها و چک‌ها ----------
+          const cLoan = Color(0xFF5B6EF5);
+          const cCheq = Color(0xFFD63864);
+          const cWarn = Color(0xFFF59E0B);
+          const cPurple = Color(0xFF7C5CFC);
+
+          String _enDigits(String s) {
+            var t = s.trim();
+            for (var i = 0; i < 10; i++) {
+              t = t
+                  .replaceAll(String.fromCharCode(0x06F0 + i), '$i')
+                  .replaceAll(String.fromCharCode(0x0660 + i), '$i');
+            }
+            return t.replaceAll('٫', '.').replaceAll('،', '.').replaceAll(',', '.');
+          }
+
+          DateTime addMonths(DateTime d, int n) {
+            if (isJalali) {
+              final j = toJalali(d);
+              final tot = j[1] - 1 + n;
+              final y = j[0] + tot ~/ 12;
+              final m = tot % 12 + 1;
+              final day = j[2] > jalaliMonthLength(y, m) ? jalaliMonthLength(y, m) : j[2];
+              return jalaliToDate(y, m, day);
+            }
+            final tot = d.month - 1 + n;
+            final y = d.year + tot ~/ 12;
+            final m = tot % 12 + 1;
+            final dim = DateTime(y, m + 1, 0).day;
+            return DateTime(y, m, d.day > dim ? dim : d.day);
+          }
+
+          DateTime _today0() {
+            final n = DateTime.now();
+            return DateTime(n.year, n.month, n.day);
+          }
+
+          Widget kv(String k, String v, {Color? vc}) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(children: [
+                  Text(k, style: const TextStyle(color: Colors.grey)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: Text(v,
+                          textAlign: TextAlign.end,
+                          style: TextStyle(fontWeight: FontWeight.bold, color: vc))),
+                ]),
+              );
+
+          Widget badge(String t, Color col) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                    color: col.withValues(alpha: .15), borderRadius: BorderRadius.circular(20)),
+                child: Text(t, style: TextStyle(color: col, fontSize: 12, fontWeight: FontWeight.bold)),
+              );
+
+          Widget dateTile(IconData ic, String label, DateTime? v, VoidCallback? onTap,
+                  {VoidCallback? onClear}) =>
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(ic),
+                title: Text(v == null ? '$label: ندارد' : '$label: ${fmtDate(v)}'),
+                trailing: (v == null || onClear == null)
+                    ? null
+                    : IconButton(icon: const Icon(Icons.close), onPressed: onClear),
+                onTap: onTap,
+              );
+
+          // ---------- مدل وام ----------
+          class Loan {
+            final Map<String, dynamic> m;
+            Loan(this.m);
+            String get id => m['id'] as String;
+            String get title => '${m['title'] ?? ''}';
+            String get lender => '${m['lender'] ?? ''}';
+            bool get taken => m['direction'] != 'given';
+            int get principal => (m['principal_amount'] as num).toInt();
+            int get count => (m['installment_count'] as num).toInt();
+            int get instAmount => (m['installment_amount'] as num).toInt();
+            int get period => ((m['period_months'] ?? 1) as num).toInt();
+            List<Map<String, dynamic>> get inst {
+              final l = List<Map<String, dynamic>>.from((m['loan_installments'] as List?) ?? []);
+              l.sort((a, b) => (a['number'] as num).compareTo(b['number'] as num));
+              return l;
+            }
+
+            static bool isPaid(Map<String, dynamic> i) => i['paid_at'] != null;
+            static int amt(Map<String, dynamic> i) => (i['amount'] as num).toInt();
+            static DateTime? dueOf(Map<String, dynamic> i) => DateTime.tryParse('${i['due_at']}');
+            int get total => inst.fold<int>(0, (s, i) => s + amt(i));
+            int get paidAmount => inst.where(isPaid).fold<int>(0, (s, i) => s + amt(i));
+            int get remaining => total - paidAmount;
+            int get paidCount => inst.where(isPaid).length;
+            bool get done => inst.isNotEmpty && paidCount == inst.length;
+            Map<String, dynamic>? get next {
+              for (final i in inst) {
+                if (!isPaid(i)) return i;
+              }
+              return null;
+            }
+
+            DateTime? get nextDue => next == null ? null : dueOf(next!);
+            bool get overdue => nextDue != null && nextDue!.isBefore(_today0());
+            double get progress => total == 0 ? 0 : paidAmount / total;
+          }
+
+          // ---------- مدل چک ----------
+          class Cheque {
+            final Map<String, dynamic> m;
+            Cheque(this.m);
+            String get id => m['id'] as String;
+            bool get received => m['direction'] == 'received';
+            bool get guarantee => m['kind'] == 'guarantee';
+            int get amount => (m['amount'] as num).toInt();
+            String get status => '${m['status'] ?? 'pending'}';
+            String get who => ((m['contacts'] as Map?)?['name'] ?? '') as String;
+            String get number => '${m['cheque_number'] ?? ''}';
+            String get sayad => '${m['sayad_id'] ?? ''}';
+            String get bank => '${m['bank'] ?? ''}';
+            String get branch => '${m['branch'] ?? ''}';
+            DateTime? get due => m['due_at'] == null ? null : DateTime.tryParse('${m['due_at']}');
+            DateTime? get issued => m['issued_at'] == null ? null : DateTime.tryParse('${m['issued_at']}');
+            bool get pending => status == 'pending';
+            bool get overdue => pending && !guarantee && due != null && due!.isBefore(_today0());
+            bool get soon =>
+                pending && !guarantee && due != null && !overdue && due!.difference(_today0()).inDays <= 7;
+            String get statusLabel => chequeStatusLabel(status, received);
+            Color get statusColor => chequeStatusColor(status);
+          }
+
+          String chequeStatusLabel(String s, bool received) {
+            switch (s) {
+              case 'cashed':
+                return received ? 'وصول‌شده' : 'پاس‌شده';
+              case 'bounced':
+                return 'برگشتی';
+              case 'endorsed':
+                return 'واگذار شده';
+              case 'returned':
+                return 'عودت‌شده';
+              default:
+                return 'در انتظار';
+            }
+          }
+
+          Color chequeStatusColor(String s) {
+            switch (s) {
+              case 'cashed':
+                return cRec;
+              case 'bounced':
+                return cPay;
+              case 'endorsed':
+                return cPurple;
+              case 'returned':
+                return Colors.blueGrey;
+              default:
+                return cWarn;
+            }
+          }
+
+          Future<void> toggleInstallment(BuildContext c, Map<String, dynamic> i) async {
+            final paid = Loan.isPaid(i);
+            final ok = await confirm(
+                c,
+                paid ? 'لغو پرداخت قسط' : 'ثبت پرداخت قسط',
+                paid ? 'پرداخت این قسط لغو شود؟' : 'این قسط پرداخت شد؟',
+                ok: paid ? 'لغو پرداخت' : 'پرداخت شد');
+            if (!ok || !c.mounted) return;
+            await run(c, () async {
+              await sb
+                  .from('loan_installments')
+                  .update({'paid_at': paid ? null : ymd(DateTime.now())}).eq('id', i['id']);
+            });
+          }
+
+          // ---------- صفحهٔ وام‌ها ----------
+          class LoansPage extends StatefulWidget {
+            const LoansPage({super.key});
+            @override
+            State<LoansPage> createState() => _LoansPageState();
+          }
+
+          class _LoansPageState extends State<LoansPage> {
+            String tab = 'loans';
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(title: const Text('وام و اقساط')),
+                floatingActionButton: FloatingActionButton.extended(
+                  onPressed: () => Navigator.push(
+                      context, MaterialPageRoute(builder: (_) => const LoanFormPage())),
+                  icon: const Icon(Icons.add),
+                  label: const Text('ثبت وام'),
+                ),
+                body: SafeArea(
+                  child: ListenableBuilder(
+                    listenable: Listenable.merge([store, unit, calendarMode]),
+                    builder: (c, _) {
+                      final loans = store.loans;
+                      final taken = loans.where((l) => l.taken).fold<int>(0, (s, l) => s + l.remaining);
+                      final given = loans.where((l) => !l.taken).fold<int>(0, (s, l) => s + l.remaining);
+                      final rows = <MapEntry<Loan, Map<String, dynamic>>>[];
+                      for (final l in loans) {
+                        for (final i in l.inst) {
+                          if (!Loan.isPaid(i)) rows.add(MapEntry(l, i));
+                        }
+                      }
+                      rows.sort((a, b) => '${a.value['due_at']}'.compareTo('${b.value['due_at']}'));
+                      return RefreshIndicator(
+                        onRefresh: store.load,
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                          children: [
+                            Row(children: [
+                              Expanded(child: _sumCard(c, 'مانده وام‌های من', taken, cPay)),
+                              const SizedBox(width: 12),
+                              Expanded(child: _sumCard(c, 'مانده وام‌های داده‌شده', given, cRec)),
+                            ]),
+                            const SizedBox(height: 12),
+                            SegmentedButton<String>(
+                              segments: const [
+                                ButtonSegment(value: 'loans', label: Text('وام‌های من')),
+                                ButtonSegment(value: 'inst', label: Text('اقساط سررسید')),
+                              ],
+                              selected: {tab},
+                              onSelectionChanged: (s) => setState(() => tab = s.first),
+                            ),
+                            const SizedBox(height: 12),
+                            if (tab == 'loans') ...[
+                              if (loans.isEmpty) emptyBox('هنوز وامی ثبت نشده است'),
+                              ...loans.map((l) => _loanTile(c, l)),
+                            ] else ...[
+                              if (rows.isEmpty) emptyBox('قسط پرداخت‌نشده‌ای ندارید ✨'),
+                              ...rows.map((e) => _instTile(c, e.key, e.value)),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              );
+            }
+
+            Widget _sumCard(BuildContext c, String t, int v, Color col) => Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                      color: col.withValues(alpha: .12), borderRadius: BorderRadius.circular(18)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(t, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 6),
+                    Text(money(v), style: TextStyle(color: col, fontWeight: FontWeight.bold)),
+                  ]),
+                );
+
+            Widget _loanTile(BuildContext c, Loan l) {
+              final col = l.done ? cRec : (l.overdue ? cPay : cLoan);
+              return card(
+                c,
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                            color: col.withValues(alpha: .15), borderRadius: BorderRadius.circular(14)),
+                        child: Icon(l.taken ? Icons.south_west : Icons.north_east, color: col)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(l.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text('${l.taken ? 'وام‌دهنده' : 'وام‌گیرنده'}: ${l.lender.isEmpty ? '—' : l.lender}',
+                          style: Theme.of(c).textTheme.bodySmall),
+                    ])),
+                    badge(l.done ? 'تسویه‌شده' : (l.overdue ? 'معوق' : 'جاری'), col),
+                  ]),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(value: l.progress, minHeight: 8, color: col)),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Text('${faDigits('${l.paidCount}')} از ${faDigits('${l.count}')} قسط'),
+                    const Spacer(),
+                    Text('مانده: ${money(l.remaining)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ]),
+                  if (l.nextDue != null) ...[
+                    const SizedBox(height: 4),
+                    Text('قسط بعدی: ${fmtDate(l.nextDue!)}',
+                        style: TextStyle(color: l.overdue ? cPay : null)),
+                  ],
+                ]),
+                onTap: () => Navigator.push(
+                    c, MaterialPageRoute(builder: (_) => LoanDetailPage(l.id))),
+              );
+            }
+
+            Widget _instTile(BuildContext c, Loan l, Map<String, dynamic> i) {
+              final d = Loan.dueOf(i);
+              final lateFlag = d != null && d.isBefore(_today0());
+              final col = lateFlag ? cPay : cLoan;
+              return card(
+                c,
+                Row(children: [
+                  Icon(Icons.event_note, color: col),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('قسط ${faDigits('${i['number']}')} — ${l.title}',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(d == null ? '' : '${lateFlag ? 'معوق از' : 'سررسید'}: ${fmtDate(d)}',
+                        style: TextStyle(color: lateFlag ? cPay : null, fontSize: 12)),
+                  ])),
+                  Text(money(Loan.amt(i)), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  IconButton(
+                      tooltip: 'ثبت پرداخت',
+                      icon: const Icon(Icons.check_circle_outline),
+                      onPressed: () => toggleInstallment(c, i)),
+                ]),
+                onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => LoanDetailPage(l.id))),
+              );
+            }
+          }
+
+          // ---------- جزئیات وام ----------
+          class LoanDetailPage extends StatelessWidget {
+            final String id;
+            const LoanDetailPage(this.id, {super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit, calendarMode]),
+                builder: (c, _) {
+                  final found = store.loans.where((l) => l.id == id);
+                  if (found.isEmpty) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                  final l = found.first;
+                  final col = l.done ? cRec : (l.overdue ? cPay : cLoan);
+                  return Scaffold(
+                    appBar: AppBar(title: const Text('جزئیات وام'), actions: [
+                      IconButton(
+                          icon: const Icon(Icons.edit_outlined),
+                          onPressed: () => Navigator.push(
+                              c, MaterialPageRoute(builder: (_) => LoanFormPage(edit: l)))),
+                      IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            final ok = await confirm(c, 'حذف وام', 'وام و همهٔ اقساط آن حذف شود؟', ok: 'حذف');
+                            if (!ok || !c.mounted) return;
+                            final done = await run(c, () async {
+                              await sb.from('loans').delete().eq('id', l.id);
+                            });
+                            if (done && c.mounted) Navigator.pop(c);
+                          }),
+                    ]),
+                    body: ListView(padding: const EdgeInsets.all(16), children: [
+                      card(
+                        c,
+                        Row(children: [
+                          SizedBox(
+                            width: 96,
+                            height: 96,
+                            child: Stack(alignment: Alignment.center, children: [
+                              SizedBox.expand(
+                                  child: CircularProgressIndicator(
+                                      value: l.progress, strokeWidth: 10, color: col,
+                                      backgroundColor: col.withValues(alpha: .15))),
+                              Text('${faDigits('${(l.progress * 100).round()}')}٪',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                            ]),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(l.title,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                            const SizedBox(height: 6),
+                            badge(l.done ? 'تسویه‌شده' : (l.overdue ? 'دارای قسط معوق' : 'جاری'), col),
+                          ])),
+                        ]),
+                      ),
+                      card(
+                        c,
+                        Column(children: [
+                          kv(l.taken ? 'وام‌دهنده' : 'وام‌گیرنده', l.lender.isEmpty ? '—' : l.lender),
+                          kv('نوع', l.taken ? 'وام گرفته‌شده' : 'وام داده‌شده'),
+                          kv('مبلغ وام', money(l.principal)),
+                          kv('تعداد اقساط', faDigits('${l.count}')),
+                          kv('مبلغ هر قسط', money(l.instAmount)),
+                          kv('دوره پرداخت', l.period == 1 ? 'ماهانه' : 'هر ${faDigits('${l.period}')} ماه'),
+                          if (m2(l, 'interest_percent') != null)
+                            kv('نرخ سود', '${faDigits('${l.m['interest_percent']}')}٪'),
+                          kv('مجموع بازپرداخت', money(l.total)),
+                          kv('پرداخت‌شده', money(l.paidAmount), vc: cRec),
+                          kv('باقی‌مانده', money(l.remaining), vc: cPay),
+                          if ('${l.m['notes'] ?? ''}'.isNotEmpty) kv('توضیحات', '${l.m['notes']}'),
+                        ]),
+                      ),
+                      sec(c, 'اقساط'),
+                      ...l.inst.map((i) {
+                        final paid = Loan.isPaid(i);
+                        final d = Loan.dueOf(i);
+                        final lateFlag = !paid && d != null && d.isBefore(_today0());
+                        final ic = paid ? cRec : (lateFlag ? cPay : cWarn);
+                        return card(
+                          c,
+                          Row(children: [
+                            CircleAvatar(
+                                radius: 16,
+                                backgroundColor: ic.withValues(alpha: .15),
+                                child: Text(faDigits('${i['number']}'),
+                                    style: TextStyle(color: ic, fontWeight: FontWeight.bold))),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(money(Loan.amt(i)), style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text(
+                                  paid
+                                      ? 'پرداخت: ${fmtDate(DateTime.parse('${i['paid_at']}'))}'
+                                      : 'سررسید: ${d == null ? '' : fmtDate(d)}',
+                                  style: const TextStyle(fontSize: 12)),
+                            ])),
+                            badge(paid ? 'پرداخت‌شده' : (lateFlag ? 'معوق' : 'در انتظار'), ic),
+                          ]),
+                          pad: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          onTap: () => toggleInstallment(c, i),
+                        );
+                      }),
+                      const SizedBox(height: 8),
+                      const Text('برای ثبت یا لغو پرداخت هر قسط، روی آن بزنید.',
+                          textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    ]),
+                  );
+                },
+              );
+            }
+
+            dynamic m2(Loan l, String k) => l.m[k];
+          }
+
+          // ---------- فرم ثبت/ویرایش وام ----------
+          class LoanFormPage extends StatefulWidget {
+            final Loan? edit;
+            const LoanFormPage({super.key, this.edit});
+            @override
+            State<LoanFormPage> createState() => _LoanFormPageState();
+          }
+
+          class _LoanFormPageState extends State<LoanFormPage> {
+            String direction = 'taken';
+            final title = TextEditingController();
+            final lender = TextEditingController();
+            final amount = TextEditingController();
+            final count = TextEditingController();
+            final instAmt = TextEditingController();
+            final rate = TextEditingController();
+            final notes = TextEditingController();
+            int period = 1;
+            late DateTime first;
+            late DateTime opened;
+            bool busy = false;
+
+            @override
+            void initState() {
+              super.initState();
+              final e = widget.edit;
+              opened = DateTime.now();
+              first = addMonths(DateTime.now(), 1);
+              if (e != null) {
+                direction = e.taken ? 'taken' : 'given';
+                title.text = e.title;
+                lender.text = e.lender;
+                amount.text = '${e.principal}';
+                count.text = '${e.count}';
+                instAmt.text = '${e.instAmount}';
+                rate.text = e.m['interest_percent'] == null ? '' : '${e.m['interest_percent']}';
+                notes.text = '${e.m['notes'] ?? ''}';
+                period = e.period;
+                opened = DateTime.tryParse('${e.m['opened_at']}') ?? opened;
+                if (e.inst.isNotEmpty) first = Loan.dueOf(e.inst.first) ?? first;
+              }
+            }
+
+            @override
+            void dispose() {
+              for (final t in [title, lender, amount, count, instAmt, rate, notes]) {
+                t.dispose();
+              }
+              super.dispose();
+            }
+
+            double? get _rate => rate.text.trim().isEmpty ? null : double.tryParse(_enDigits(rate.text));
+
+            void autoFill() {
+              final amt = parseAmount(amount.text), n = parseAmount(count.text);
+              if (amt == null || n == null || n <= 0) {
+                toast(context, 'ابتدا مبلغ وام و تعداد اقساط را وارد کنید');
+                return;
+              }
+              final r = _rate ?? 0;
+              final totalPay = amt * (1 + r / 100 * (n * period) / 12);
+              setState(() => instAmt.text = '${(totalPay / n).ceil()}');
+            }
+
+            Future<void> save() async {
+              final e = widget.edit;
+              if (title.text.trim().isEmpty) {
+                toast(context, 'عنوان وام را وارد کنید');
+                return;
+              }
+              final amt = parseAmount(amount.text), n = parseAmount(count.text);
+              final ia = parseAmount(instAmt.text);
+              if (e == null) {
+                if (amt == null || amt <= 0) {
+                  toast(context, 'مبلغ وام معتبر نیست');
+                  return;
+                }
+                if (n == null || n <= 0 || n > 600) {
+                  toast(context, 'تعداد اقساط معتبر نیست');
+                  return;
+                }
+                if (ia == null || ia <= 0) {
+                  toast(context, 'مبلغ هر قسط را وارد کنید');
+                  return;
+                }
+              }
+              if (rate.text.trim().isNotEmpty && _rate == null) {
+                toast(context, 'نرخ سود معتبر نیست');
+                return;
+              }
+              setState(() => busy = true);
+              final ok = await run(context, () async {
+                final body = {
+                  'direction': direction,
+                  'title': title.text.trim(),
+                  'lender': lender.text.trim().isEmpty ? null : lender.text.trim(),
+                  'notes': notes.text.trim().isEmpty ? null : notes.text.trim(),
+                };
+                if (e != null) {
+                  await sb.from('loans').update(body).eq('id', e.id);
+                  return;
+                }
+                final r = await sb.from('loans').insert({
+                  ...body,
+                  'user_id': uid(),
+                  'principal_amount': amt,
+                  'installment_count': n,
+                  'installment_amount': ia,
+                  'period_months': period,
+                  'interest_percent': _rate,
+                  'first_due_at': ymd(first),
+                  'opened_at': ymd(opened),
+                  'currency': unit.value,
+                }).select('id').single();
+                final loanId = r['id'] as String;
+                await sb.from('loan_installments').insert([
+                  for (var k = 0; k < n!; k++)
+                    {
+                      'user_id': uid(),
+                      'loan_id': loanId,
+                      'number': k + 1,
+                      'due_at': ymd(addMonths(first, k * period)),
+                      'amount': ia,
+                    }
+                ]);
+              });
+              if (!mounted) return;
+              setState(() => busy = false);
+              if (ok) Navigator.pop(context);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final e = widget.edit;
+              final locked = e != null;
+              return Scaffold(
+                appBar: AppBar(title: Text(e == null ? 'ثبت وام جدید' : 'ویرایش وام')),
+                body: ListView(padding: const EdgeInsets.all(16), children: [
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'taken', label: Text('وام گرفته‌ام'), icon: Icon(Icons.south_west)),
+                      ButtonSegment(value: 'given', label: Text('وام داده‌ام'), icon: Icon(Icons.north_east)),
+                    ],
+                    selected: {direction},
+                    onSelectionChanged: (s) => setState(() => direction = s.first),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(controller: title, decoration: deco('عنوان وام (مثلاً وام مسکن)', icon: Icons.title)),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: lender,
+                      decoration: deco(direction == 'taken' ? 'وام‌دهنده (بانک/شخص)' : 'وام‌گیرنده',
+                          icon: Icons.account_balance_outlined)),
+                  const SizedBox(height: 12),
+                  if (locked)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                          'مبلغ، تعداد و زمان‌بندی اقساط پس از ثبت قابل تغییر نیست تا وضعیت پرداخت‌ها حفظ شود. در صورت نیاز، وام را حذف و دوباره ثبت کنید.',
+                          style: TextStyle(color: Theme.of(context).colorScheme.outline, fontSize: 12)),
+                    ),
+                  TextField(
+                      controller: amount,
+                      enabled: !locked,
+                      keyboardType: TextInputType.number,
+                      decoration: deco('مبلغ وام (${unit.value})', icon: Icons.payments_outlined)),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                        child: TextField(
+                            controller: count,
+                            enabled: !locked,
+                            keyboardType: TextInputType.number,
+                            decoration: deco('تعداد اقساط', icon: Icons.format_list_numbered))),
+                    const SizedBox(width: 12),
+                    Expanded(
+                        child: TextField(
+                            controller: rate,
+                            enabled: !locked,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: deco('نرخ سود سالانه ٪ (اختیاری)', icon: Icons.percent))),
+                  ]),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: instAmt,
+                      enabled: !locked,
+                      keyboardType: TextInputType.number,
+                      decoration: deco('مبلغ هر قسط (${unit.value})', icon: Icons.paid_outlined).copyWith(
+                          suffixIcon: locked
+                              ? null
+                              : TextButton(onPressed: autoFill, child: const Text('محاسبه')))),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: period,
+                    decoration: deco('دورهٔ پرداخت', icon: Icons.repeat),
+                    items: const [
+                      DropdownMenuItem(value: 1, child: Text('ماهانه')),
+                      DropdownMenuItem(value: 2, child: Text('هر دو ماه')),
+                      DropdownMenuItem(value: 3, child: Text('سه‌ماهه')),
+                      DropdownMenuItem(value: 6, child: Text('شش‌ماهه')),
+                      DropdownMenuItem(value: 12, child: Text('سالانه')),
+                    ],
+                    onChanged: locked ? null : (v) => setState(() => period = v ?? 1),
+                  ),
+                  const SizedBox(height: 12),
+                  card(
+                    context,
+                    Column(children: [
+                      dateTile(Icons.event, 'تاریخ دریافت/ثبت وام', opened, locked
+                          ? null
+                          : () async {
+                              final d = await pickDate(context, opened);
+                              if (d != null) setState(() => opened = d);
+                            }),
+                      dateTile(Icons.alarm, 'سررسید اولین قسط', first, locked
+                          ? null
+                          : () async {
+                              final d = await pickDate(context, first);
+                              if (d != null) setState(() => first = d);
+                            }),
+                    ]),
+                  ),
+                  TextField(controller: notes, maxLines: 3, decoration: deco('توضیحات (اختیاری)')),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                      height: 52,
+                      child: FilledButton(
+                          onPressed: busy ? null : save,
+                          child: Text(e == null ? 'ثبت وام و ساخت اقساط' : 'ذخیره تغییرات'))),
+                ]),
+              );
+            }
+          }
+
+          // ---------- صفحهٔ چک‌ها ----------
+          class ChequesPage extends StatefulWidget {
+            const ChequesPage({super.key});
+            @override
+            State<ChequesPage> createState() => _ChequesPageState();
+          }
+
+          class _ChequesPageState extends State<ChequesPage> {
+            String dir = 'received', kind = 'all', st = 'all';
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(title: const Text('دفتر چک‌ها')),
+                floatingActionButton: FloatingActionButton.extended(
+                  onPressed: () => Navigator.push(
+                      context, MaterialPageRoute(builder: (_) => ChequeFormPage(initDir: dir))),
+                  icon: const Icon(Icons.add),
+                  label: const Text('ثبت چک'),
+                ),
+                body: SafeArea(
+                  child: ListenableBuilder(
+                    listenable: Listenable.merge([store, unit, calendarMode]),
+                    builder: (c, _) {
+                      final all = store.cheques;
+                      final mine = all.where((x) => (x.received) == (dir == 'received')).toList();
+                      final pendSum = mine.where((x) => x.pending).fold<int>(0, (s, x) => s + x.amount);
+                      final lateFlag = mine.where((x) => x.overdue).length;
+                      final list = mine
+                          .where((x) => kind == 'all' || (kind == 'guarantee') == x.guarantee)
+                          .where((x) => st == 'all' || x.status == st)
+                          .toList()
+                        ..sort((a, b) {
+                          if (a.pending != b.pending) return a.pending ? -1 : 1;
+                          final da = a.due ?? DateTime(2100), db = b.due ?? DateTime(2100);
+                          return da.compareTo(db);
+                        });
+                      final stOpts = dir == 'received'
+                          ? ['pending', 'cashed', 'bounced', 'endorsed', 'returned']
+                          : ['pending', 'cashed', 'bounced', 'returned'];
+                      return RefreshIndicator(
+                        onRefresh: store.load,
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                          children: [
+                            SegmentedButton<String>(
+                              segments: const [
+                                ButtonSegment(value: 'received', label: Text('چک‌های دریافتی')),
+                                ButtonSegment(value: 'issued', label: Text('چک‌های پرداختی')),
+                              ],
+                              selected: {dir},
+                              onSelectionChanged: (s) => setState(() {
+                                dir = s.first;
+                                st = 'all';
+                              }),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(children: [
+                              Expanded(
+                                  child: _sum(c, 'جمع در انتظار', money(pendSum), dir == 'received' ? cRec : cPay)),
+                              const SizedBox(width: 12),
+                              Expanded(child: _sum(c, 'سررسید گذشته', '${faDigits('$lateFlag')} چک', cWarn)),
+                            ]),
+                            const SizedBox(height: 12),
+                            Wrap(spacing: 8, runSpacing: 4, children: [
+                              for (final k in const [
+                                ['all', 'همهٔ انواع'],
+                                ['dated', 'تاریخ‌دار'],
+                                ['guarantee', 'ضمانتی'],
+                              ])
+                                ChoiceChip(
+                                    label: Text(k[1]),
+                                    selected: kind == k[0],
+                                    onSelected: (_) => setState(() => kind = k[0])),
+                            ]),
+                            Wrap(spacing: 8, runSpacing: 4, children: [
+                              ChoiceChip(
+                                  label: const Text('همهٔ وضعیت‌ها'),
+                                  selected: st == 'all',
+                                  onSelected: (_) => setState(() => st = 'all')),
+                              for (final s in stOpts)
+                                ChoiceChip(
+                                    label: Text(chequeStatusLabel(s, dir == 'received')),
+                                    selected: st == s,
+                                    onSelected: (_) => setState(() => st = s)),
+                            ]),
+                            const SizedBox(height: 12),
+                            if (list.isEmpty) emptyBox('چکی یافت نشد'),
+                            ...list.map((x) => _tile(c, x)),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              );
+            }
+
+            Widget _sum(BuildContext c, String t, String v, Color col) => Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                      color: col.withValues(alpha: .12), borderRadius: BorderRadius.circular(18)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(t, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 6),
+                    Text(v, style: TextStyle(color: col, fontWeight: FontWeight.bold)),
+                  ]),
+                );
+
+            Widget _tile(BuildContext c, Cheque x) {
+              final col = x.statusColor;
+              final bankLine = [
+                if (x.bank.isNotEmpty) 'بانک ${x.bank}',
+                if (x.branch.isNotEmpty) 'شعبه ${x.branch}',
+              ].join(' - ');
+              return card(
+                c,
+                Row(children: [
+                  Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                          color: col.withValues(alpha: .15), borderRadius: BorderRadius.circular(14)),
+                      child: Icon(x.guarantee ? Icons.shield_outlined : Icons.receipt_long, color: col)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(x.number.isEmpty ? 'چک بدون شماره' : 'چک شماره ${faDigits(x.number)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (bankLine.isNotEmpty) Text(bankLine, style: const TextStyle(fontSize: 12)),
+                    Text(
+                        [
+                          if (x.who.isNotEmpty) x.who,
+                          x.guarantee
+                              ? 'ضمانتی'
+                              : (x.due == null ? '' : 'سررسید ${fmtDate(x.due!)}'),
+                        ].where((e) => e.isNotEmpty).join(' • '),
+                        style: TextStyle(fontSize: 12, color: x.overdue ? cPay : null)),
+                  ])),
+                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text(money(x.amount), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    badge(x.overdue ? 'سررسید گذشته' : x.statusLabel, x.overdue ? cPay : col),
+                  ]),
+                ]),
+                onTap: () =>
+                    Navigator.push(c, MaterialPageRoute(builder: (_) => ChequeDetailPage(x.id))),
+              );
+            }
+          }
+
+          // ---------- جزئیات چک ----------
+          class ChequeDetailPage extends StatelessWidget {
+            final String id;
+            const ChequeDetailPage(this.id, {super.key});
+
+            Future<void> _setStatus(BuildContext c, Cheque x, String s) async {
+              await run(c, () async {
+                await sb.from('cheques').update({
+                  'status': s,
+                  'status_at': s == 'pending' ? null : ymd(DateTime.now()),
+                }).eq('id', x.id);
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: Listenable.merge([store, unit, calendarMode]),
+                builder: (c, _) {
+                  final found = store.cheques.where((x) => x.id == id);
+                  if (found.isEmpty) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                  final x = found.first;
+                  final opts = x.received
+                      ? ['pending', 'cashed', 'bounced', 'endorsed', 'returned']
+                      : ['pending', 'cashed', 'bounced', 'returned'];
+                  return Scaffold(
+                    appBar: AppBar(title: const Text('جزئیات چک'), actions: [
+                      IconButton(
+                          icon: const Icon(Icons.edit_outlined),
+                          onPressed: () => Navigator.push(
+                              c, MaterialPageRoute(builder: (_) => ChequeFormPage(edit: x)))),
+                      IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            final ok = await confirm(c, 'حذف چک', 'این چک حذف شود؟', ok: 'حذف');
+                            if (!ok || !c.mounted) return;
+                            final done = await run(c, () async {
+                              await sb.from('cheques').delete().eq('id', x.id);
+                            });
+                            if (done && c.mounted) Navigator.pop(c);
+                          }),
+                    ]),
+                    body: ListView(padding: const EdgeInsets.all(16), children: [
+                      card(
+                        c,
+                        Column(children: [
+                          Icon(x.guarantee ? Icons.shield_outlined : Icons.receipt_long,
+                              size: 40, color: x.statusColor),
+                          const SizedBox(height: 8),
+                          Text(money(x.amount),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22)),
+                          const SizedBox(height: 8),
+                          badge(x.overdue ? 'سررسید گذشته' : x.statusLabel,
+                              x.overdue ? cPay : x.statusColor),
+                          if (x.soon) ...[
+                            const SizedBox(height: 8),
+                            const Text('سررسید این چک نزدیک است', style: TextStyle(color: cWarn)),
+                          ],
+                        ]),
+                      ),
+                      card(
+                        c,
+                        Column(children: [
+                          kv('نوع', x.received ? 'دریافتی' : 'پرداختی'),
+                          kv('نوع چک', x.guarantee ? 'ضمانتی' : 'تاریخ‌دار'),
+                          kv(x.received ? 'صادرکننده' : 'گیرنده', x.who.isEmpty ? '—' : x.who),
+                          if (x.number.isNotEmpty) kv('شمارهٔ چک', faDigits(x.number)),
+                          if (x.sayad.isNotEmpty) kv('شناسهٔ صیاد', faDigits(x.sayad)),
+                          if (x.bank.isNotEmpty) kv('بانک', x.bank),
+                          if (x.branch.isNotEmpty) kv('شعبه', x.branch),
+                          if (x.issued != null) kv('تاریخ صدور', fmtDate(x.issued!)),
+                          kv('تاریخ سررسید', x.due == null ? 'ندارد' : fmtDate(x.due!)),
+                          if (x.m['status_at'] != null)
+                            kv('تاریخ تغییر وضعیت', fmtDate(DateTime.parse('${x.m['status_at']}'))),
+                          if ('${x.m['notes'] ?? ''}'.isNotEmpty) kv('توضیحات', '${x.m['notes']}'),
+                        ]),
+                      ),
+                      sec(c, 'تغییر وضعیت'),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        for (final s in opts)
+                          ChoiceChip(
+                            label: Text(chequeStatusLabel(s, x.received)),
+                            selected: x.status == s,
+                            selectedColor: chequeStatusColor(s).withValues(alpha: .25),
+                            onSelected: x.status == s ? null : (_) => _setStatus(c, x, s),
+                          ),
+                      ]),
+                    ]),
+                  );
+                },
+              );
+            }
+          }
+
+          const _banks = [
+            'ملی', 'ملت', 'سپه', 'صادرات', 'تجارت', 'کشاورزی', 'مسکن', 'رفاه کارگران', 'پست‌بانک',
+            'سامان', 'پاسارگاد', 'پارسیان', 'اقتصاد نوین', 'آینده', 'سینا', 'شهر', 'دی', 'کارآفرین',
+            'سرمایه', 'ایران‌زمین', 'گردشگری', 'قوامین', 'توسعه تعاون', 'صنعت و معدن', 'مهر ایران',
+          ];
+
+          // ---------- فرم ثبت/ویرایش چک ----------
+          class ChequeFormPage extends StatefulWidget {
+            final Cheque? edit;
+            final String initDir;
+            const ChequeFormPage({super.key, this.edit, this.initDir = 'received'});
+            @override
+            State<ChequeFormPage> createState() => _ChequeFormPageState();
+          }
+
+          class _ChequeFormPageState extends State<ChequeFormPage> {
+            late String dir;
+            String kind = 'dated';
+            String? cid;
+            final newName = TextEditingController();
+            final number = TextEditingController();
+            final sayad = TextEditingController();
+            final bank = TextEditingController();
+            final branch = TextEditingController();
+            final amount = TextEditingController();
+            final notes = TextEditingController();
+            late DateTime issued;
+            DateTime? due;
+            bool busy = false;
+
+            @override
+            void initState() {
+              super.initState();
+              final e = widget.edit;
+              dir = e == null ? widget.initDir : (e.received ? 'received' : 'issued');
+              issued = e?.issued ?? DateTime.now();
+              due = e?.due;
+              if (e != null) {
+                kind = e.guarantee ? 'guarantee' : 'dated';
+                cid = e.m['contact_id'] as String?;
+                number.text = e.number;
+                sayad.text = e.sayad;
+                bank.text = e.bank;
+                branch.text = e.branch;
+                amount.text = '${e.amount}';
+                notes.text = '${e.m['notes'] ?? ''}';
+              } else if (store.contacts.isEmpty) {
+                cid = 'new';
+              }
+            }
+
+            @override
+            void dispose() {
+              for (final t in [newName, number, sayad, bank, branch, amount, notes]) {
+                t.dispose();
+              }
+              super.dispose();
+            }
+
+            Future<void> save() async {
+              final amt = parseAmount(amount.text);
+              if (cid == null) {
+                toast(context, dir == 'received' ? 'صادرکنندهٔ چک را انتخاب کنید' : 'گیرندهٔ چک را انتخاب کنید');
+                return;
+              }
+              if (cid == 'new' && newName.text.trim().isEmpty) {
+                toast(context, 'نام شخص را وارد کنید');
+                return;
+              }
+              if (amt == null || amt <= 0) {
+                toast(context, 'مبلغ چک معتبر نیست');
+                return;
+              }
+              if (kind == 'dated' && due == null) {
+                toast(context, 'برای چک تاریخ‌دار، تاریخ سررسید را مشخص کنید');
+                return;
+              }
+              final sy = _enDigits(sayad.text);
+              if (sy.isNotEmpty && sy.length != 16) {
+                toast(context, 'شناسهٔ صیاد باید ۱۶ رقم باشد');
+                return;
+              }
+              setState(() => busy = true);
+              final e = widget.edit;
+              final ok = await run(context, () async {
+                var contact = cid;
+                if (contact == 'new') {
+                  final r = await sb
+                      .from('contacts')
+                      .insert({'user_id': uid(), 'name': newName.text.trim()})
+                      .select('id')
+                      .single();
+                  contact = r['id'] as String;
+                }
+                String? t(TextEditingController x) => x.text.trim().isEmpty ? null : x.text.trim();
+                final body = {
+                  'contact_id': contact,
+                  'direction': dir,
+                  'kind': kind,
+                  'cheque_number': t(number) == null ? null : _enDigits(number.text),
+                  'sayad_id': sy.isEmpty ? null : sy,
+                  'bank': t(bank),
+                  'branch': t(branch),
+                  'amount': amt,
+                  'issued_at': ymd(issued),
+                  'due_at': due == null ? null : ymd(due!),
+                  'notes': t(notes),
+                };
+                if (e == null) {
+                  await sb.from('cheques').insert({...body, 'user_id': uid(), 'status': 'pending', 'currency': unit.value});
+                } else {
+                  await sb.from('cheques').update(body).eq('id', e.id);
+                }
+              });
+              if (!mounted) return;
+              setState(() => busy = false);
+              if (ok) Navigator.pop(context);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final e = widget.edit;
+              return Scaffold(
+                appBar: AppBar(title: Text(e == null ? 'ثبت چک جدید' : 'ویرایش چک')),
+                body: ListView(padding: const EdgeInsets.all(16), children: [
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'received', label: Text('چک دریافتی'), icon: Icon(Icons.south_west)),
+                      ButtonSegment(value: 'issued', label: Text('چک پرداختی'), icon: Icon(Icons.north_east)),
+                    ],
+                    selected: {dir},
+                    onSelectionChanged: (s) => setState(() => dir = s.first),
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'dated', label: Text('تاریخ‌دار'), icon: Icon(Icons.event)),
+                      ButtonSegment(value: 'guarantee', label: Text('ضمانتی'), icon: Icon(Icons.shield_outlined)),
+                    ],
+                    selected: {kind},
+                    onSelectionChanged: (s) => setState(() => kind = s.first),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: cid,
+                    decoration: deco(dir == 'received' ? 'صادرکننده (پرداخت‌کننده)' : 'گیرندهٔ چک',
+                        icon: Icons.person_outline),
+                    items: [
+                      ...store.contacts
+                          .map((p) => DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))),
+                      const DropdownMenuItem(value: 'new', child: Text('＋ شخص جدید')),
+                    ],
+                    onChanged: (v) => setState(() => cid = v),
+                  ),
+                  if (cid == 'new') ...[
+                    const SizedBox(height: 12),
+                    TextField(controller: newName, decoration: deco('نام شخص جدید')),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: amount,
+                      keyboardType: TextInputType.number,
+                      decoration: deco('مبلغ چک (${unit.value})', icon: Icons.payments_outlined)),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: number,
+                      keyboardType: TextInputType.number,
+                      decoration: deco('شمارهٔ چک', icon: Icons.tag)),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: sayad,
+                      keyboardType: TextInputType.number,
+                      maxLength: 16,
+                      decoration: deco('شناسهٔ صیاد (۱۶ رقم، اختیاری)', icon: Icons.fingerprint)),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: bank,
+                    decoration: deco('بانک', icon: Icons.account_balance_outlined).copyWith(
+                      suffixIcon: PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        onSelected: (v) => setState(() => bank.text = v),
+                        itemBuilder: (_) =>
+                            _banks.map((b) => PopupMenuItem(value: b, child: Text(b))).toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(controller: branch, decoration: deco('شعبه', icon: Icons.store_mall_directory_outlined)),
+                  const SizedBox(height: 12),
+                  card(
+                    context,
+                    Column(children: [
+                      dateTile(Icons.event, 'تاریخ صدور', issued, () async {
+                        final d = await pickDate(context, issued);
+                        if (d != null) setState(() => issued = d);
+                      }),
+                      dateTile(Icons.alarm, kind == 'guarantee' ? 'تاریخ سررسید (اختیاری)' : 'تاریخ سررسید', due,
+                          () async {
+                        final d = await pickDate(context, due ?? DateTime.now());
+                        if (d != null) setState(() => due = d);
+                      }, onClear: kind == 'guarantee' ? () => setState(() => due = null) : null),
+                    ]),
+                  ),
+                  TextField(controller: notes, maxLines: 3, decoration: deco('توضیحات (اختیاری)')),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                      height: 52,
+                      child: FilledButton(
+                          onPressed: busy ? null : save, child: Text(e == null ? 'ثبت چک' : 'ذخیره تغییرات'))),
+                ]),
+              );
+            }
+          }
+
           // ---------- backup & export ----------
           Future<void> shareFile(String name, String content, String mime) async {
             final d = await getTemporaryDirectory();
@@ -2704,6 +3834,64 @@ jobs:
           create index if not exists tx_account_idx on public.transactions(account_id);
           create index if not exists backup_user_idx on public.backup_records(user_id, created_at desc);
 
+          -- ===== وام‌ها و چک‌ها =====
+          create table if not exists public.loans (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            direction text not null default 'taken' check (direction in ('taken','given')),
+            title text not null,
+            lender text,
+            principal_amount bigint not null check (principal_amount > 0),
+            installment_count int not null check (installment_count > 0),
+            installment_amount bigint not null check (installment_amount > 0),
+            period_months int not null default 1 check (period_months > 0),
+            interest_percent numeric,
+            first_due_at date not null,
+            opened_at date not null default current_date,
+            notes text,
+            currency text not null default 'تومان',
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+          );
+
+          create table if not exists public.loan_installments (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            loan_id uuid not null references public.loans(id) on delete cascade,
+            number int not null,
+            due_at date not null,
+            amount bigint not null check (amount > 0),
+            paid_at date,
+            created_at timestamptz not null default now()
+          );
+
+          create table if not exists public.cheques (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+            contact_id uuid references public.contacts(id) on delete set null,
+            direction text not null check (direction in ('received','issued')),
+            kind text not null default 'dated' check (kind in ('dated','guarantee')),
+            cheque_number text,
+            sayad_id text,
+            bank text,
+            branch text,
+            amount bigint not null check (amount > 0),
+            issued_at date not null default current_date,
+            due_at date,
+            status text not null default 'pending' check (status in ('pending','cashed','bounced','endorsed','returned')),
+            status_at date,
+            notes text,
+            currency text not null default 'تومان',
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+          );
+
+          create index if not exists loans_user_idx on public.loans(user_id);
+          create index if not exists loan_inst_user_idx on public.loan_installments(user_id);
+          create index if not exists loan_inst_loan_idx on public.loan_installments(loan_id);
+          create index if not exists cheques_user_idx on public.cheques(user_id);
+          create index if not exists cheques_due_idx on public.cheques(user_id, due_at);
+
           create or replace function public.set_updated_at() returns trigger
           language plpgsql as $$
           begin new.updated_at = now(); return new; end $$;
@@ -2713,6 +3901,12 @@ jobs:
             for each row execute function public.set_updated_at();
           drop trigger if exists accounts_upd on public.accounts;
           create trigger accounts_upd before update on public.accounts
+            for each row execute function public.set_updated_at();
+          drop trigger if exists loans_upd on public.loans;
+          create trigger loans_upd before update on public.loans
+            for each row execute function public.set_updated_at();
+          drop trigger if exists cheques_upd on public.cheques;
+          create trigger cheques_upd before update on public.cheques
             for each row execute function public.set_updated_at();
 
           create or replace function public.handle_new_user() returns trigger
@@ -2731,6 +3925,9 @@ jobs:
           alter table public.accounts enable row level security;
           alter table public.transactions enable row level security;
           alter table public.backup_records enable row level security;
+          alter table public.loans enable row level security;
+          alter table public.loan_installments enable row level security;
+          alter table public.cheques enable row level security;
 
           drop policy if exists own_profiles on public.profiles;
           create policy own_profiles on public.profiles for all to authenticated
@@ -2752,6 +3949,22 @@ jobs:
             with check (user_id = auth.uid() and exists (
               select 1 from public.accounts a where a.id = account_id and a.user_id = auth.uid()));
 
+          drop policy if exists own_loans on public.loans;
+          create policy own_loans on public.loans for all to authenticated
+            using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+          drop policy if exists own_loan_installments on public.loan_installments;
+          create policy own_loan_installments on public.loan_installments for all to authenticated
+            using (user_id = auth.uid())
+            with check (user_id = auth.uid() and exists (
+              select 1 from public.loans l where l.id = loan_id and l.user_id = auth.uid()));
+
+          drop policy if exists own_cheques on public.cheques;
+          create policy own_cheques on public.cheques for all to authenticated
+            using (user_id = auth.uid())
+            with check (user_id = auth.uid() and (contact_id is null or exists (
+              select 1 from public.contacts c where c.id = contact_id and c.user_id = auth.uid())));
+
           drop policy if exists own_backup_records on public.backup_records;
           create policy own_backup_records on public.backup_records for all to authenticated
             using (user_id = auth.uid()) with check (user_id = auth.uid());
@@ -2760,6 +3973,8 @@ jobs:
           create or replace function public.restore_user_data(payload jsonb) returns void
           language plpgsql security invoker set search_path = public as $$
           begin
+            delete from public.cheques where user_id = auth.uid();
+            delete from public.loans where user_id = auth.uid();
             delete from public.contacts where user_id = auth.uid();
 
             insert into public.contacts(id, user_id, name, phone, notes, archived_at, created_at, updated_at)
@@ -2784,6 +3999,32 @@ jobs:
                    (t->>'amount')::bigint, coalesce((t->>'transaction_date')::date, current_date),
                    t->>'note', coalesce((t->>'created_at')::timestamptz, now())
             from jsonb_array_elements(coalesce(payload->'transactions', '[]'::jsonb)) t;
+
+            insert into public.loans(id, user_id, direction, title, lender, principal_amount, installment_count,
+                                     installment_amount, period_months, interest_percent, first_due_at, opened_at,
+                                     notes, currency, created_at, updated_at)
+            select (l->>'id')::uuid, auth.uid(), coalesce(l->>'direction', 'taken'), l->>'title', l->>'lender',
+                   (l->>'principal_amount')::bigint, (l->>'installment_count')::int,
+                   (l->>'installment_amount')::bigint, coalesce((l->>'period_months')::int, 1),
+                   (l->>'interest_percent')::numeric, (l->>'first_due_at')::date,
+                   coalesce((l->>'opened_at')::date, current_date), l->>'notes', coalesce(l->>'currency', 'تومان'),
+                   coalesce((l->>'created_at')::timestamptz, now()), coalesce((l->>'updated_at')::timestamptz, now())
+            from jsonb_array_elements(coalesce(payload->'loans', '[]'::jsonb)) l;
+
+            insert into public.loan_installments(id, user_id, loan_id, number, due_at, amount, paid_at, created_at)
+            select (i->>'id')::uuid, auth.uid(), (i->>'loan_id')::uuid, (i->>'number')::int, (i->>'due_at')::date,
+                   (i->>'amount')::bigint, (i->>'paid_at')::date, coalesce((i->>'created_at')::timestamptz, now())
+            from jsonb_array_elements(coalesce(payload->'loan_installments', '[]'::jsonb)) i;
+
+            insert into public.cheques(id, user_id, contact_id, direction, kind, cheque_number, sayad_id, bank, branch,
+                                       amount, issued_at, due_at, status, status_at, notes, currency, created_at, updated_at)
+            select (h->>'id')::uuid, auth.uid(), (h->>'contact_id')::uuid, h->>'direction', coalesce(h->>'kind', 'dated'),
+                   h->>'cheque_number', h->>'sayad_id', h->>'bank', h->>'branch', (h->>'amount')::bigint,
+                   coalesce((h->>'issued_at')::date, current_date), (h->>'due_at')::date,
+                   coalesce(h->>'status', 'pending'), (h->>'status_at')::date, h->>'notes',
+                   coalesce(h->>'currency', 'تومان'),
+                   coalesce((h->>'created_at')::timestamptz, now()), coalesce((h->>'updated_at')::timestamptz, now())
+            from jsonb_array_elements(coalesce(payload->'cheques', '[]'::jsonb)) h;
           end $$;
 
           create or replace function public.delete_my_account() returns void
