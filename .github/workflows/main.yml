@@ -65,6 +65,7 @@ jobs:
           PUBSPEC_EOF
           cat > lib/main.dart <<'MAIN_EOF'
           import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
           import 'package:flutter_localizations/flutter_localizations.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:supabase_flutter/supabase_flutter.dart';
@@ -73,6 +74,7 @@ jobs:
 
           Future<void> main() async {
             WidgetsFlutterBinding.ensureInitialized();
+            SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
             await loadCalendarPref();
             await loadLockPref();
             await loadCustomLock();
@@ -562,11 +564,13 @@ jobs:
           DATA_EOF
           cat > lib/screens.dart <<'SCREENS_EOF'
           import 'dart:convert';
+          import 'dart:async';
           import 'dart:io';
           import 'dart:math' as math;
           import 'dart:ui' show ImageFilter;
           import 'package:crypto/crypto.dart';
           import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
           import 'package:path_provider/path_provider.dart';
           import 'package:share_plus/share_plus.dart';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -1014,7 +1018,11 @@ jobs:
             }
 
             @override
-            Widget build(BuildContext context) {
+            Widget build(BuildContext context) => GlassFrame(
+                keys: i == 0 ? const ['home_hero', 'home_loans', 'home_cheques'] : const [],
+                child: _scaffold(context));
+
+            Widget _scaffold(BuildContext context) {
               return Scaffold(
                 body: SafeArea(
                   child: IndexedStack(index: i, children: const [
@@ -1078,6 +1086,24 @@ jobs:
 
           class _DashboardPageState extends State<DashboardPage> {
             bool saving = false;
+            bool editing = false;
+            DateTime? _editAt;
+
+            bool get _recentEdit =>
+                _editAt != null && DateTime.now().difference(_editAt!).inMilliseconds < 900;
+
+            VoidCallback _guard(VoidCallback f) => () {
+                  if (_recentEdit) return;
+                  f();
+                };
+
+            void _enterEdit() {
+              if (editing) return;
+              setState(() {
+                editing = true;
+                _editAt = DateTime.now();
+              });
+            }
 
             static const _wd = ['دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه', 'شنبه', 'یکشنبه'];
 
@@ -1247,28 +1273,37 @@ jobs:
                 c,
                 hs,
                 _kNavy,
-                Column(children: [
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    side('طلبکاری‌های من', rec, Icons.trending_up, _kBlue.withValues(alpha: .55),
-                        const Color(0xFF6FB0F5), () => _list(c, 'rec')),
-                    Container(
-                      width: 86,
-                      height: 86,
-                      decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xFF2B64B0),
-                          border: Border.all(color: _kBlue, width: 12)),
-                      child: Icon(net < 0 ? Icons.trending_down : Icons.trending_up,
-                          color: Colors.white, size: 30),
+                LayoutBuilder(
+                  builder: (c, bc) => FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: SizedBox(
+                      width: bc.maxWidth,
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          side('طلبکاری‌های من', rec, Icons.trending_up, _kBlue.withValues(alpha: .55),
+                              const Color(0xFF6FB0F5), _guard(() => _list(c, 'rec'))),
+                          Container(
+                            width: 86,
+                            height: 86,
+                            decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: const Color(0xFF2B64B0),
+                                border: Border.all(color: _kBlue, width: 12)),
+                            child: Icon(net < 0 ? Icons.trending_down : Icons.trending_up,
+                                color: Colors.white, size: 30),
+                          ),
+                          side('بدهکاری‌های من', pay, Icons.trending_down, const Color(0xFF8A4E8C),
+                              const Color(0xFFD63864), _guard(() => _list(c, 'pay'))),
+                        ]),
+                        const SizedBox(height: 12),
+                        Text(msg, style: TextStyle(color: tcol, fontSize: 14)),
+                      ]),
                     ),
-                    side('بدهکاری‌های من', pay, Icons.trending_down, const Color(0xFF8A4E8C),
-                        const Color(0xFFD63864), () => _list(c, 'pay')),
-                  ]),
-                  SizedBox(height: 12 * hs.size),
-                  Text(msg, style: TextStyle(color: tcol, fontSize: 14)),
-                ]),
+                  ),
+                ),
                 radius: 26,
-                pad: EdgeInsets.fromLTRB(12, 18 * hs.size, 12, 16 * hs.size),
+                center: true,
+                pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 colors: base == null ? const [_kBlue, _kNavy] : [base, _darken(base)],
               );
             }
@@ -1276,49 +1311,159 @@ jobs:
             Widget _big(BuildContext c, String k, String t, Color col, VoidCallback f) {
               final s = uiStyles.of('home_$k');
               final tc = s.textColor != null ? Color(s.textColor!) : Colors.white;
-              return Expanded(
-                child: styledBox(
-                  c,
-                  s,
-                  col,
-                  Text(t, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: tc)),
-                  onTap: f,
-                  radius: 22,
-                  height: 72 * s.size,
-                  center: true,
-                  pad: const EdgeInsets.symmetric(horizontal: 8),
+              return styledBox(
+                c,
+                s,
+                col,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(t, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: tc)),
                 ),
+                onTap: f,
+                radius: 22,
+                center: true,
+                pad: const EdgeInsets.symmetric(horizontal: 8),
               );
             }
 
             Widget _bigFor(BuildContext c, String k) => k == 'loans'
-                ? _big(c, 'loans', 'وام‌ها', _kIndigo, () => _open(c, const LoansPage()))
-                : _big(c, 'cheques', 'چک‌ها', _kRose, () => _open(c, const ChequesPage()));
+                ? _big(c, 'loans', 'وام‌ها', _kIndigo, _guard(() => _open(c, const LoansPage())))
+                : _big(c, 'cheques', 'چک‌ها', _kRose, _guard(() => _open(c, const ChequesPage())));
 
-            // چیدمان کادرها بر اساس ترتیبی که کاربر در تنظیمات تعیین کرده
-            List<Widget> _boxes(BuildContext c, int rec, int pay, int net) {
-              final order = uiStyles.homeOrder;
-              final out = <Widget>[];
-              var i = 0;
-              while (i < order.length) {
-                final k = order[i];
-                if (k == 'hero') {
-                  out.add(_hero(c, rec, pay, net));
-                  i++;
-                } else if (i + 1 < order.length && order[i + 1] != 'hero') {
-                  out.add(Row(children: [
-                    _bigFor(c, k),
-                    const SizedBox(width: 14),
-                    _bigFor(c, order[i + 1]),
-                  ]));
-                  i += 2;
-                } else {
-                  out.add(Row(children: [_bigFor(c, k)]));
-                  i++;
-                }
-                out.add(const SizedBox(height: 14));
+            Widget _editBar(BuildContext c) => card(
+                  c,
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('حالت ویرایش چیدمان', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    const Text(
+                        'کادرها را بکشید تا جابه‌جا شوند. از لبهٔ راست، لبهٔ پایین و گوشهٔ هر کادر برای تغییر عرض و ارتفاع استفاده کنید.',
+                        style: TextStyle(fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      FilledButton.icon(
+                          onPressed: () => setState(() => editing = false),
+                          icon: const Icon(Icons.check),
+                          label: const Text('اتمام')),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                          onPressed: () => uiStyles.resetLayout(),
+                          icon: const Icon(Icons.restart_alt),
+                          label: const Text('بازنشانی چیدمان')),
+                    ]),
+                  ]),
+                );
+
+            Widget _pill(Color c, bool horizontal) => Center(
+                  child: Container(
+                    width: horizontal ? 36 : 6,
+                    height: horizontal ? 6 : 36,
+                    decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3)),
+                  ),
+                );
+
+            // کادر در حالت ویرایش: جابه‌جایی با کشیدن، تغییر اندازه با دستگیره‌ها
+            Widget _editable(BuildContext c, String k, double w, Widget content) {
+              final pc = Theme.of(c).colorScheme.primary;
+              void move(DragUpdateDetails d) {
+                final r = uiStyles.rect(k);
+                final nx = (r[0] + d.delta.dx / w).clamp(0.0, math.max(0.0, 1 - r[2])).toDouble();
+                final ny = math.max(0.0, r[1] + d.delta.dy);
+                uiStyles.setRect(k, [nx, ny, r[2], r[3]], save: false);
               }
-              return out;
+
+              void resize(DragUpdateDetails d, {bool dw = false, bool dh = false}) {
+                final r = uiStyles.rect(k);
+                var nw = r[2], nh = r[3];
+                if (dw) nw = (r[2] + d.delta.dx / w).clamp(.25, math.max(.25, 1 - r[0])).toDouble();
+                if (dh) nh = (r[3] + d.delta.dy).clamp(56.0, 500.0).toDouble();
+                uiStyles.setRect(k, [r[0], r[1], nw, nh], save: false);
+              }
+
+              return Stack(children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanUpdate: move,
+                    onPanEnd: (_) => uiStyles.flush(),
+                    child: AbsorbPointer(child: content),
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(color: pc, width: 2)),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  top: 18,
+                  bottom: 34,
+                  width: 26,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanUpdate: (d) => resize(d, dw: true),
+                    onPanEnd: (_) => uiStyles.flush(),
+                    child: _pill(pc, false),
+                  ),
+                ),
+                Positioned(
+                  left: 18,
+                  right: 34,
+                  bottom: 0,
+                  height: 26,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanUpdate: (d) => resize(d, dh: true),
+                    onPanEnd: (_) => uiStyles.flush(),
+                    child: _pill(pc, true),
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  width: 34,
+                  height: 34,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanUpdate: (d) => resize(d, dw: true, dh: true),
+                    onPanEnd: (_) => uiStyles.flush(),
+                    child: Container(
+                      decoration: BoxDecoration(
+                          color: pc,
+                          borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(12), bottomRight: Radius.circular(20))),
+                      child: const Icon(Icons.open_in_full, size: 16, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ]);
+            }
+
+            // بوم آزاد سه کادر خانه: هر کادر x, y, عرض و ارتفاع مستقل دارد
+            Widget _canvas(BuildContext c, int rec, int pay, int net) {
+              return LayoutBuilder(builder: (c, bc) {
+                final w = bc.maxWidth;
+                var bottom = 0.0;
+                final kids = <Widget>[];
+                for (final k in const ['hero', 'loans', 'cheques']) {
+                  final r = uiStyles.rect(k);
+                  bottom = math.max(bottom, r[1] + r[3]);
+                  final content = k == 'hero' ? _hero(c, rec, pay, net) : _bigFor(c, k);
+                  kids.add(Positioned(
+                    left: r[0] * w,
+                    top: r[1],
+                    width: r[2] * w,
+                    height: r[3],
+                    child: editing
+                        ? _editable(c, k, w, content)
+                        : HoldDetector(onHold: _enterEdit, child: content),
+                  ));
+                }
+                return SizedBox(height: bottom, child: Stack(clipBehavior: Clip.none, children: kids));
+              });
             }
 
             @override
@@ -1341,7 +1486,9 @@ jobs:
                     child: RefreshIndicator(
                     onRefresh: store.load,
                     child: ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
+                      physics: editing
+                          ? const NeverScrollableScrollPhysics()
+                          : const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                       children: [
                         Row(children: [
@@ -1387,8 +1534,9 @@ jobs:
                         ]),
                         const SizedBox(height: 14),
                         offlineBanner(c),
-                        ..._boxes(c, rec, pay, net),
-                        const SizedBox(height: 4),
+                        if (editing) _editBar(c),
+                        _canvas(c, rec, pay, net),
+                        const SizedBox(height: 14),
                         if (rows.isEmpty) emptyBox('شخصی ثبت نشده است'),
                         ...rows.map((e) {
                           final p = e.key, n = e.value;
@@ -2291,7 +2439,10 @@ jobs:
             String tab = 'loans';
 
             @override
-            Widget build(BuildContext context) {
+            Widget build(BuildContext context) => GlassFrame(
+                keys: const ['loan_top', 'loan_card'], child: _scaffold(context));
+
+            Widget _scaffold(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(title: const Text('وام و اقساط'), actions: [
                   IconButton(
@@ -2815,7 +2966,10 @@ jobs:
             String dir = 'received', kind = 'all', st = 'all';
 
             @override
-            Widget build(BuildContext context) {
+            Widget build(BuildContext context) => GlassFrame(
+                keys: const ['cheq_top', 'cheq_card'], child: _scaffold(context));
+
+            Widget _scaffold(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(title: const Text('دفتر چک‌ها'), actions: [
                   IconButton(
@@ -3291,14 +3445,22 @@ jobs:
             double textScale;
             double opacity;
             bool glass;
-            double size;
+            double size; // برای کادر کارت‌ها: ضریب ارتفاع (فشرده‌سازی)
+            bool border;
+            double bw;
+            int? bc;
+            double bo;
             BoxStyle(
                 {this.color,
                 this.textColor,
                 this.textScale = 1,
                 this.opacity = 1,
                 this.glass = false,
-                this.size = 1});
+                this.size = 1,
+                this.border = false,
+                this.bw = 2,
+                this.bc,
+                this.bo = 1});
 
             Map<String, dynamic> toJson() => {
                   'c': color,
@@ -3307,6 +3469,10 @@ jobs:
                   'o': opacity,
                   'g': glass,
                   'z': size,
+                  'b': border,
+                  'bw': bw,
+                  'bc': bc,
+                  'bo': bo,
                 };
 
             static BoxStyle fromJson(Map j) => BoxStyle(
@@ -3316,14 +3482,31 @@ jobs:
                   opacity: ((j['o'] ?? 1) as num).toDouble(),
                   glass: j['g'] == true,
                   size: ((j['z'] ?? 1) as num).toDouble(),
+                  border: j['b'] == true,
+                  bw: ((j['bw'] ?? 2) as num).toDouble(),
+                  bc: j['bc'] as int?,
+                  bo: ((j['bo'] ?? 1) as num).toDouble(),
                 );
           }
 
           class UiStyles extends ChangeNotifier {
             final Map<String, BoxStyle> _m = {};
-            List<String> homeOrder = ['hero', 'loans', 'cheques'];
+            final Map<String, List<double>> _r = {};
+
+            // [x (کسری از عرض، از چپ), y (پیکسل), عرض (کسری), ارتفاع (پیکسل)]
+            static List<double> defaultRect(String k) {
+              switch (k) {
+                case 'hero':
+                  return [0, 0, 1, 190];
+                case 'cheques':
+                  return [0, 204, .48, 72];
+                default:
+                  return [.52, 204, .48, 72];
+              }
+            }
 
             BoxStyle of(String k) => _m.putIfAbsent(k, () => BoxStyle());
+            List<double> rect(String k) => _r[k] ?? defaultRect(k);
 
             Future<void> load() async {
               try {
@@ -3333,8 +3516,11 @@ jobs:
                   final j = jsonDecode(raw) as Map;
                   final boxes = (j['boxes'] as Map?) ?? {};
                   boxes.forEach((k, v) => _m['$k'] = BoxStyle.fromJson(v as Map));
-                  final o = (j['order'] as List?)?.map((e) => '$e').toList();
-                  if (o != null && o.length == 3 && o.toSet().length == 3) homeOrder = o;
+                  final rects = (j['rects'] as Map?) ?? {};
+                  rects.forEach((k, v) {
+                    final l = (v as List).map((e) => (e as num).toDouble()).toList();
+                    if (l.length == 4) _r['$k'] = l;
+                  });
                 }
               } catch (_) {}
             }
@@ -3346,10 +3532,12 @@ jobs:
                     'ui_styles',
                     jsonEncode({
                       'boxes': _m.map((k, v) => MapEntry(k, v.toJson())),
-                      'order': homeOrder,
+                      'rects': _r,
                     }));
               } catch (_) {}
             }
+
+            Future<void> flush() => _save();
 
             Future<void> change(String k, void Function(BoxStyle s) f) async {
               f(of(k));
@@ -3365,12 +3553,14 @@ jobs:
               await _save();
             }
 
-            Future<void> moveHome(String k, int dir) async {
-              final i = homeOrder.indexOf(k), j = i + dir;
-              if (i < 0 || j < 0 || j >= homeOrder.length) return;
-              final t = homeOrder[i];
-              homeOrder[i] = homeOrder[j];
-              homeOrder[j] = t;
+            Future<void> setRect(String k, List<double> r, {bool save = true}) async {
+              _r[k] = r;
+              notifyListeners();
+              if (save) await _save();
+            }
+
+            Future<void> resetLayout() async {
+              _r.clear();
               notifyListeners();
               await _save();
             }
@@ -3380,7 +3570,7 @@ jobs:
 
           Color _darken(Color c) {
             final h = HSLColor.fromColor(c);
-            return h.withLightness((h.lightness - .25).clamp(0.0, 1.0).toDouble()).toColor();
+            return h.withLightness((h.lightness - .25).clamp(0.0, 1.0)).toColor();
           }
 
           /// کادر قابل‌تنظیم: رنگ، شفافیت، شیشه‌ای، اندازهٔ متن و رنگ متن
@@ -3409,9 +3599,14 @@ jobs:
                   borderRadius: r,
                   gradient: LinearGradient(
                       begin: Alignment.centerLeft, end: Alignment.centerRight, colors: cols),
-                  border: s.glass
-                      ? Border.all(color: Colors.white.withValues(alpha: .45), width: 1.2)
-                      : null,
+                  border: s.border
+                      ? Border.all(
+                          color: (s.bc != null ? Color(s.bc!) : Theme.of(c).colorScheme.primary)
+                              .withValues(alpha: s.bo),
+                          width: s.bw)
+                      : (s.glass
+                          ? Border.all(color: Colors.white.withValues(alpha: .45), width: 1.2)
+                          : null),
                 ),
                 child: InkWell(
                   onTap: onTap,
@@ -3433,11 +3628,16 @@ jobs:
             return box;
           }
 
-          Widget cardBox(BuildContext c, String key, Widget child, {VoidCallback? onTap}) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: styledBox(c, uiStyles.of(key), Theme.of(c).colorScheme.surfaceContainerLow, child,
-                    onTap: onTap),
-              );
+          Widget cardBox(BuildContext c, String key, Widget child, {VoidCallback? onTap}) {
+            final s = uiStyles.of(key);
+            final gap = math.max(3.0, 12 * s.size);
+            final vp = math.max(2.0, 16 * s.size);
+            return Padding(
+              padding: EdgeInsets.only(bottom: gap),
+              child: styledBox(c, s, Theme.of(c).colorScheme.surfaceContainerLow, child,
+                  onTap: onTap, pad: EdgeInsets.symmetric(horizontal: 16, vertical: vp)),
+            );
+          }
 
           Widget topBox(BuildContext c, bool glass, Color col, Widget child) =>
               styledBox(c, BoxStyle(glass: glass, opacity: glass ? .6 : .12), col, child, radius: 18);
@@ -3462,22 +3662,42 @@ jobs:
             );
           }
 
-          /// پس‌زمینهٔ رنگی ملایم تا اثر شیشه‌ای دیده شود (فقط وقتی شیشه‌ای فعال است)
+          /// (قدیمی) فقط فرزند را برمی‌گرداند؛ پس‌زمینهٔ شیشه‌ای حالا با GlassFrame کل صفحه را می‌پوشاند
           class GlassBg extends StatelessWidget {
             final List<String> keys;
             final Widget child;
             const GlassBg({super.key, required this.keys, required this.child});
 
             @override
+            Widget build(BuildContext context) => child;
+          }
+
+          /// پس‌زمینهٔ رنگی تمام‌صفحه (زیر نوار بالای اپ، نوار وضعیت و نوار ناوبری گوشی)
+          class GlassFrame extends StatelessWidget {
+            final List<String> keys;
+            final Widget child;
+            const GlassFrame({super.key, required this.keys, required this.child});
+
+            @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
                 listenable: uiStyles,
                 builder: (c, _) {
-                  final on = keys.any((k) => uiStyles.of(k).glass);
-                  if (!on) return child;
-                  final dark = Theme.of(c).brightness == Brightness.dark;
-                  return Stack(fit: StackFit.expand, children: [
-                    DecoratedBox(
+                  if (!keys.any((k) => uiStyles.of(k).glass)) return child;
+                  final th = Theme.of(c);
+                  final dark = th.brightness == Brightness.dark;
+                  final icons = dark ? Brightness.light : Brightness.dark;
+                  final overlay = SystemUiOverlayStyle(
+                    statusBarColor: Colors.transparent,
+                    systemNavigationBarColor: Colors.transparent,
+                    systemNavigationBarDividerColor: Colors.transparent,
+                    systemNavigationBarContrastEnforced: false,
+                    statusBarIconBrightness: icons,
+                    systemNavigationBarIconBrightness: icons,
+                  );
+                  return AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: overlay,
+                    child: DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topRight,
@@ -3487,10 +3707,64 @@ jobs:
                               : const [Color(0xFFB7D8FF), Color(0xFFE4D4FF), Color(0xFFFFD9E6)],
                         ),
                       ),
+                      child: Theme(
+                        data: th.copyWith(
+                          scaffoldBackgroundColor: Colors.transparent,
+                          appBarTheme: th.appBarTheme.copyWith(
+                              backgroundColor: Colors.transparent,
+                              surfaceTintColor: Colors.transparent,
+                              systemOverlayStyle: overlay),
+                          navigationBarTheme: th.navigationBarTheme.copyWith(
+                              backgroundColor: Colors.transparent, surfaceTintColor: Colors.transparent),
+                        ),
+                        child: child,
+                      ),
                     ),
-                    child,
-                  ]);
+                  );
                 },
+              );
+            }
+          }
+
+          /// نگه‌داشتن انگشت (پیش‌فرض ۲ ثانیه) روی ویجت
+          class HoldDetector extends StatefulWidget {
+            final Widget child;
+            final VoidCallback onHold;
+            final Duration duration;
+            const HoldDetector(
+                {super.key,
+                required this.child,
+                required this.onHold,
+                this.duration = const Duration(seconds: 2)});
+            @override
+            State<HoldDetector> createState() => _HoldDetectorState();
+          }
+
+          class _HoldDetectorState extends State<HoldDetector> {
+            Timer? _t;
+            Offset? _p0;
+
+            @override
+            void dispose() {
+              _t?.cancel();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (e) {
+                  _p0 = e.position;
+                  _t?.cancel();
+                  _t = Timer(widget.duration, widget.onHold);
+                },
+                onPointerMove: (e) {
+                  if (_p0 != null && (e.position - _p0!).distance > 14) _t?.cancel();
+                },
+                onPointerUp: (_) => _t?.cancel(),
+                onPointerCancel: (_) => _t?.cancel(),
+                child: widget.child,
               );
             }
           }
@@ -3537,13 +3811,32 @@ jobs:
                   const Spacer(),
                   Text(faDigits('${(v * 100).round()}٪')),
                 ]),
+                Slider(value: v.clamp(min, max), min: min, max: max, onChanged: f),
+              ]);
+
+          Widget _sliderNum(String label, double v, double min, double max, ValueChanged<double> f) =>
+              Column(children: [
+                Row(children: [
+                  Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  Text(faDigits(v.toStringAsFixed(1))),
+                ]),
                 Slider(value: v.clamp(min, max).toDouble(), min: min, max: max, onChanged: f),
               ]);
 
           class StyleEditor extends StatelessWidget {
             final String k;
-            final bool size, glass;
-            const StyleEditor(this.k, {super.key, this.size = false, this.glass = false});
+            final bool size, glass, border;
+            final String sizeLabel;
+            final double sizeMin, sizeMax;
+            const StyleEditor(this.k,
+                {super.key,
+                this.size = false,
+                this.glass = false,
+                this.border = false,
+                this.sizeLabel = 'اندازهٔ کادر',
+                this.sizeMin = .6,
+                this.sizeMax = 1.6});
 
             @override
             Widget build(BuildContext context) {
@@ -3559,7 +3852,7 @@ jobs:
                     _sliderRow('شفافیت کادر', s.opacity, .1, 1,
                         (v) => uiStyles.change(k, (x) => x.opacity = v)),
                     if (size)
-                      _sliderRow('اندازهٔ کادر', s.size, .6, 1.6,
+                      _sliderRow(sizeLabel, s.size, sizeMin, sizeMax,
                           (v) => uiStyles.change(k, (x) => x.size = v)),
                     if (glass)
                       SwitchListTile(
@@ -3568,6 +3861,21 @@ jobs:
                         value: s.glass,
                         onChanged: (v) => uiStyles.change(k, (x) => x.glass = v),
                       ),
+                    if (border) ...[
+                      const Divider(),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('خط دور کادر', style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: const Text('دور تا دور کادرها یک خط کشیده می‌شود'),
+                        value: s.border,
+                        onChanged: (v) => uiStyles.change(k, (x) => x.border = v),
+                      ),
+                      if (s.border) ...[
+                        _sliderNum('ضخامت خط', s.bw, .5, 8, (v) => uiStyles.change(k, (x) => x.bw = v)),
+                        _colorRow(c, 'رنگ خط', s.bc, (v) => uiStyles.change(k, (x) => x.bc = v)),
+                        _sliderRow('شفافیت خط', s.bo, .1, 1, (v) => uiStyles.change(k, (x) => x.bo = v)),
+                      ],
+                    ],
                   ]);
                 },
               );
@@ -3595,7 +3903,12 @@ jobs:
                     const SizedBox(height: 12),
                     Text(cardLabel, style: TextStyle(color: Theme.of(ctx).colorScheme.primary)),
                     const SizedBox(height: 8),
-                    StyleEditor(cardKey),
+                    StyleEditor(cardKey,
+                        size: true,
+                        border: true,
+                        sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
+                        sizeMin: .2,
+                        sizeMax: 1.6),
                     const Divider(),
                     const Text('حالت شیشه‌ای', style: TextStyle(fontWeight: FontWeight.bold)),
                     ListenableBuilder(
@@ -3628,9 +3941,41 @@ jobs:
           }
 
           // ---------- تنظیمات کادرهای صفحهٔ خانه ----------
+          class RectEditor extends StatelessWidget {
+            final String k;
+            const RectEditor(this.k, {super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) {
+                  final r = uiStyles.rect(k);
+                  return Column(children: [
+                    _sliderRow('عرض کادر', r[2], .25, 1, (v) {
+                      final x = math.min(r[0], 1 - v);
+                      uiStyles.setRect(k, [x < 0 ? 0 : x, r[1], v, r[3]]);
+                    }),
+                    Row(children: [
+                      const Text('ارتفاع کادر', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      Text('${faDigits('${r[3].round()}')} پیکسل'),
+                    ]),
+                    Slider(
+                        value: r[3].clamp(56.0, 400.0).toDouble(),
+                        min: 56,
+                        max: 400,
+                        onChanged: (v) => uiStyles.setRect(k, [r[0], r[1], r[2], v])),
+                  ]);
+                },
+              );
+            }
+          }
+
           class HomeBoxesPage extends StatelessWidget {
             const HomeBoxesPage({super.key});
 
+            static const _keys = ['hero', 'loans', 'cheques'];
             static const _names = {
               'hero': 'کادر آمار طلب و بدهی (بالای صفحه)',
               'loans': 'کادر وام‌ها',
@@ -3643,47 +3988,38 @@ jobs:
                 appBar: AppBar(title: const Text('کادرهای صفحه خانه')),
                 body: ListenableBuilder(
                   listenable: uiStyles,
-                  builder: (c, _) {
-                    final order = uiStyles.homeOrder;
-                    return ListView(padding: const EdgeInsets.all(16), children: [
-                      Text(
-                          'برای هر کادر رنگ، اندازهٔ کادر، اندازهٔ متن، شفافیت و حالت شیشه‌ای را جدا تنظیم کنید. با فلش‌ها می‌توانید محل قرارگیری کادرها را عوض کنید. کادر وام‌ها و چک‌ها اگر کنار هم باشند دوتایی نمایش داده می‌شوند.',
-                          style: TextStyle(color: Theme.of(c).colorScheme.outline, fontSize: 12)),
-                      const SizedBox(height: 12),
-                      for (var i = 0; i < order.length; i++)
-                        card(
-                          c,
-                          ExpansionTile(
-                            tilePadding: EdgeInsets.zero,
-                            childrenPadding: const EdgeInsets.only(top: 8),
-                            title: Text('${faDigits('${i + 1}')}. ${_names[order[i]]}',
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Row(mainAxisSize: MainAxisSize.min, children: [
-                              IconButton(
-                                  tooltip: 'بالاتر',
-                                  icon: const Icon(Icons.arrow_upward),
-                                  onPressed: i == 0 ? null : () => uiStyles.moveHome(order[i], -1)),
-                              IconButton(
-                                  tooltip: 'پایین‌تر',
-                                  icon: const Icon(Icons.arrow_downward),
-                                  onPressed:
-                                      i == order.length - 1 ? null : () => uiStyles.moveHome(order[i], 1)),
-                            ]),
-                            children: [
-                              StyleEditor('home_${order[i]}', size: true, glass: true),
-                              Align(
-                                alignment: AlignmentDirectional.centerStart,
-                                child: TextButton.icon(
-                                  onPressed: () => uiStyles.reset(['home_${order[i]}']),
-                                  icon: const Icon(Icons.restart_alt),
-                                  label: const Text('بازگشت به پیش‌فرض'),
-                                ),
+                  builder: (c, _) => ListView(padding: const EdgeInsets.all(16), children: [
+                    Text(
+                        'برای هر کادر رنگ، شفافیت، اندازهٔ متن، عرض، ارتفاع و حالت شیشه‌ای را جدا تنظیم کنید. برای جابه‌جایی آزاد و تغییر اندازه با انگشت، در صفحهٔ خانه ۲ ثانیه روی یکی از کادرها نگه دارید.',
+                        style: TextStyle(color: Theme.of(c).colorScheme.outline, fontSize: 12)),
+                    const SizedBox(height: 12),
+                    for (final k in _keys)
+                      card(
+                        c,
+                        ExpansionTile(
+                          tilePadding: EdgeInsets.zero,
+                          childrenPadding: const EdgeInsets.only(top: 8),
+                          title: Text(_names[k]!, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          children: [
+                            RectEditor(k),
+                            StyleEditor('home_$k', glass: true),
+                            Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: TextButton.icon(
+                                onPressed: () => uiStyles.reset(['home_$k']),
+                                icon: const Icon(Icons.restart_alt),
+                                label: const Text('بازگشت ظاهر به پیش‌فرض'),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                    ]);
-                  },
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: () => uiStyles.resetLayout(),
+                      icon: const Icon(Icons.grid_view),
+                      label: const Text('بازنشانی چیدمان و اندازهٔ کادرها'),
+                    ),
+                  ]),
                 ),
               );
             }
@@ -4628,7 +4964,7 @@ jobs:
                           const Expanded(
                               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text('کادرهای صفحه خانه', style: TextStyle(fontWeight: FontWeight.bold)),
-                            Text('رنگ، اندازه، محل، شفافیت و حالت شیشه‌ای'),
+                            Text('رنگ، اندازه، شفافیت، شیشه‌ای و چیدمان آزاد'),
                           ])),
                           const Icon(Icons.chevron_left),
                         ]),
