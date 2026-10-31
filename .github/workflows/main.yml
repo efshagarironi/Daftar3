@@ -1019,7 +1019,7 @@ jobs:
 
             @override
             Widget build(BuildContext context) => GlassFrame(
-                keys: i == 0 ? const ['home_hero', 'home_loans', 'home_cheques'] : const [],
+                keys: i == 0 ? const ['home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : (i == 1 ? const ['ppl_search', 'ppl_card'] : const []),
                 child: _scaffold(context));
 
             Widget _scaffold(BuildContext context) {
@@ -1027,13 +1027,12 @@ jobs:
                 body: SafeArea(
                   child: IndexedStack(index: i, children: const [
                     DashboardPage(),
-                    AccountsPage(),
                     PeoplePage(),
                     BackupPage(),
                     SettingsPage(),
                   ]),
                 ),
-                floatingActionButton: i <= 2
+                floatingActionButton: i <= 1
                     ? FloatingActionButton.extended(
                         backgroundColor: i == 0 ? const Color(0xFF4A90E8) : null,
                         foregroundColor: i == 0 ? Colors.white : null,
@@ -1047,7 +1046,6 @@ jobs:
                   onDestinationSelected: (v) => setState(() => i = v),
                   destinations: const [
                     NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'خانه'),
-                    NavigationDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: 'حساب‌ها'),
                     NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'اشخاص'),
                     NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
                     NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
@@ -1118,14 +1116,16 @@ jobs:
             // لیست طلب‌ها یا بدهی‌ها
             void _list(BuildContext c, String type) => _open(
                 c,
-                Scaffold(
+                GlassFrame(
+                    keys: const ['acc_search', 'acc_chip', 'acc_card'],
+                    child: Scaffold(
                   appBar: AppBar(title: Text(type == 'rec' ? 'طلبکاری‌ها' : 'بدهکاری‌ها')),
                   floatingActionButton: FloatingActionButton.extended(
                       onPressed: () => openAccountForm(c),
                       icon: const Icon(Icons.add),
                       label: const Text('ثبت حساب')),
                   body: SafeArea(child: AccountsPage(initType: type)),
-                ));
+                )));
 
             Future<void> _save(BuildContext c) async {
               if (saving) return;
@@ -1542,8 +1542,9 @@ jobs:
                           final p = e.key, n = e.value;
                           final col = n > 0 ? _kBlue : (n < 0 ? _kRose : Colors.grey);
                           final name = '${p['name']}';
-                          return card(
+                          return cardBox(
                             c,
+                            'home_contacts',
                             Row(children: [
                               CircleAvatar(
                                   radius: 24,
@@ -1586,7 +1587,8 @@ jobs:
 
           class AccTile extends StatelessWidget {
             final Acc a;
-            const AccTile(this.a, {super.key});
+            final String styleKey;
+            const AccTile(this.a, {super.key, this.styleKey = 'acc_card'});
 
             @override
             Widget build(BuildContext c) {
@@ -1596,8 +1598,9 @@ jobs:
               final overdue = !a.settled &&
                   a.due != null &&
                   a.due!.isBefore(DateTime(now.year, now.month, now.day));
-              return card(
+              return cardBox(
                 c,
+                styleKey,
                 Row(children: [
                   CircleAvatar(
                       backgroundColor: col.withValues(alpha: .12),
@@ -1645,13 +1648,13 @@ jobs:
 
             Widget _chip(String label, bool sel, VoidCallback f) => Padding(
                   padding: const EdgeInsetsDirectional.only(end: 8),
-                  child: ChoiceChip(label: Text(label), selected: sel, onSelected: (_) => f()),
+                  child: StyledChip(styleKey: 'acc_chip', label: Text(label), selected: sel, onSelected: (_) => f()),
                 );
 
             @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
-                listenable: Listenable.merge([store, unit]),
+                listenable: Listenable.merge([store, unit, uiStyles]),
                 builder: (c, _) {
                   final list = store.accs.where((a) {
                     if (type == 'rec' && !a.isRec) return false;
@@ -1673,12 +1676,6 @@ jobs:
                       children: [
                         offlineBanner(c),
                         Row(children: [
-                          Expanded(
-                            child: TextField(
-                                onChanged: (v) => setState(() => q = v.trim()),
-                                decoration: deco('جستجوی نام یا عنوان', icon: Icons.search)),
-                          ),
-                          const SizedBox(width: 8),
                           IconButton.filledTonal(
                             icon: Icon(range == null ? Icons.date_range : Icons.close),
                             onPressed: () async {
@@ -1690,9 +1687,24 @@ jobs:
                               if (r != null) setState(() => range = r);
                             },
                           ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                                onChanged: (v) => setState(() => q = v.trim()),
+                                style: fieldStyle('acc_search'),
+                                decoration: fieldDeco(c, 'acc_search', 'جستجوی نام یا عنوان', icon: Icons.search)),
+                          ),
+                          const SizedBox(width: 8),
+                          styleGear(c, 'تنظیمات ظاهر لیست حساب‌ها', const [
+                            StyleGroup('acc_search', 'کادر جستجو'),
+                            StyleGroup('acc_chip', 'کادرهای فیلتر (همه / طلب / بدهی / وضعیت)', textSize: false),
+                            StyleGroup('acc_card', 'کادر حساب‌ها', compress: true),
+                          ]),
                         ]),
                         const SizedBox(height: 12),
-                        SingleChildScrollView(
+                        glassWrap(
+                          uiStyles.of('acc_chip').glass,
+                          SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: Row(children: [
                             _chip('همه', type == 'all', () => setState(() => type = 'all')),
@@ -1703,7 +1715,7 @@ jobs:
                             _chip('تسویه‌شده', st == 'settled', () => setState(() => st = 'settled')),
                             _chip('همه وضعیت‌ها', st == 'all', () => setState(() => st = 'all')),
                           ]),
-                        ),
+                        )),
                         const SizedBox(height: 12),
                         if (list.isEmpty) emptyBox('حسابی پیدا نشد'),
                         ...list.map((a) => AccTile(a)),
@@ -1774,7 +1786,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
-                listenable: Listenable.merge([store, unit]),
+                listenable: Listenable.merge([store, unit, uiStyles]),
                 builder: (c, _) {
                   final list = store.contacts
                       .where((p) => q.isEmpty || '${p['name']}'.contains(q))
@@ -1787,14 +1799,20 @@ jobs:
                       children: [
                         offlineBanner(c),
                         Row(children: [
-                          Expanded(
-                              child: TextField(
-                                  onChanged: (v) => setState(() => q = v.trim()),
-                                  decoration: deco('جستجوی شخص', icon: Icons.search))),
-                          const SizedBox(width: 8),
                           IconButton.filled(
                               icon: const Icon(Icons.person_add_alt_1),
                               onPressed: () => personDialog(c)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: TextField(
+                                  onChanged: (v) => setState(() => q = v.trim()),
+                                  style: fieldStyle('ppl_search'),
+                                  decoration: fieldDeco(c, 'ppl_search', 'جستجوی شخص', icon: Icons.search))),
+                          const SizedBox(width: 8),
+                          styleGear(c, 'تنظیمات ظاهر صفحه اشخاص', const [
+                            StyleGroup('ppl_search', 'کادر جستجو'),
+                            StyleGroup('ppl_card', 'کادر اشخاص', compress: true),
+                          ]),
                         ]),
                         const SizedBox(height: 12),
                         if (list.isEmpty) emptyBox('شخصی ثبت نشده است'),
@@ -1802,8 +1820,9 @@ jobs:
                           final net = netOf(p['id'] as String);
                           final col = net > 0 ? cRec : (net < 0 ? cPay : Colors.grey);
                           final name = '${p['name']}';
-                          return card(
+                          return cardBox(
                             c,
+                            'ppl_card',
                             Row(children: [
                               CircleAvatar(
                                   backgroundColor: cBrand.withValues(alpha: .12),
@@ -1839,9 +1858,18 @@ jobs:
             const PersonPage(this.id, {super.key});
 
             @override
+            Widget build(BuildContext context) =>
+                GlassFrame(keys: const ['pers_head', 'pers_card'], child: _PersonBody(id));
+          }
+
+          class _PersonBody extends StatelessWidget {
+            final String id;
+            const _PersonBody(this.id);
+
+            @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
-                listenable: Listenable.merge([store, unit]),
+                listenable: Listenable.merge([store, unit, uiStyles]),
                 builder: (c, _) {
                   final p = store.contacts.where((x) => x['id'] == id).firstOrNull;
                   if (p == null) {
@@ -1866,14 +1894,19 @@ jobs:
                           }
                         },
                       ),
+                      styleGear(c, 'تنظیمات ظاهر جزئیات شخص', const [
+                        StyleGroup('pers_head', 'کادر بالای صفحه (مانده شخص)'),
+                        StyleGroup('pers_card', 'کادر حساب‌های شخص', compress: true),
+                      ]),
                     ]),
                     floatingActionButton: FloatingActionButton.extended(
                         onPressed: () => openAccountForm(c, contactId: id),
                         icon: const Icon(Icons.add),
                         label: const Text('حساب جدید')),
                     body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
-                      card(
+                      cardBox(
                           c,
+                          'pers_head',
                           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text(net == 0 ? 'تسویه' : (net > 0 ? 'طلب شما: ' : 'بدهی شما: ') + money(net.abs()),
                                 style: Theme.of(c).textTheme.titleLarge?.copyWith(
@@ -1884,7 +1917,7 @@ jobs:
                           ])),
                       sec(c, 'حساب‌ها'),
                       if (accs.isEmpty) emptyBox('برای این شخص حسابی ثبت نشده است'),
-                      ...accs.map((a) => AccTile(a)),
+                      ...accs.map((a) => AccTile(a, styleKey: 'pers_card')),
                     ]),
                   );
                 },
@@ -1898,9 +1931,18 @@ jobs:
             const AccountPage(this.id, {super.key});
 
             @override
+            Widget build(BuildContext context) =>
+                GlassFrame(keys: const ['accd_head', 'accd_card'], child: _AccountBody(id));
+          }
+
+          class _AccountBody extends StatelessWidget {
+            final String id;
+            const _AccountBody(this.id);
+
+            @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
-                listenable: Listenable.merge([store, unit]),
+                listenable: Listenable.merge([store, unit, uiStyles]),
                 builder: (c, _) {
                   final a = store.accs.where((x) => x.id == id).firstOrNull;
                   if (a == null) {
@@ -1931,6 +1973,10 @@ jobs:
                           PopupMenuItem(value: 'delete', child: Text('حذف حساب')),
                         ],
                       ),
+                      styleGear(c, 'تنظیمات ظاهر جزئیات حساب', const [
+                        StyleGroup('accd_head', 'کادر بالای صفحه (مانده و پیشرفت)'),
+                        StyleGroup('accd_card', 'کادر پرداخت‌ها', compress: true),
+                      ]),
                     ]),
                     floatingActionButton: a.settled
                         ? null
@@ -1945,8 +1991,9 @@ jobs:
                             icon: const Icon(Icons.add_card),
                             label: const Text('ثبت پرداخت')),
                     body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
-                      card(
+                      cardBox(
                         c,
+                        'accd_head',
                         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Row(children: [
                             Chip(
@@ -1978,8 +2025,9 @@ jobs:
                       ),
                       sec(c, 'پرداخت‌ها'),
                       if (txs.isEmpty) emptyBox('هنوز پرداختی ثبت نشده است'),
-                      ...txs.map((t) => card(
+                      ...txs.map((t) => cardBox(
                             c,
+                            'accd_card',
                             Row(children: [
                               Icon(Icons.payments_outlined, color: col),
                               const SizedBox(width: 12),
@@ -2448,13 +2496,13 @@ jobs:
                   IconButton(
                     tooltip: 'تنظیمات ظاهر',
                     icon: const Icon(Icons.settings_outlined),
-                    onPressed: () => showPageStyleSheet(context,
+                    onPressed: () => showGroupsSheet(context,
                         title: 'تنظیمات ظاهر صفحه وام‌ها',
-                        cardKey: 'loan_card',
-                        topKey: 'loan_top',
-                        cardLabel: 'کادر وام‌های ثبت‌شده',
-                        topGlassLabel: 'شیشه‌ای کردن ویجت‌های بالای صفحه وام‌ها',
-                        cardGlassLabel: 'شیشه‌ای کردن کادر وام‌های ثبت‌شده'),
+                        groups: const [
+                          StyleGroup('loan_top', 'کادرهای بالای صفحه (مانده‌ها و تب‌ها)'),
+                          StyleGroup('loan_card', 'کادر وام‌ها و اقساط ثبت‌شده', compress: true),
+                        ],
+                        sharedBorder: true),
                   ),
                 ]),
                 floatingActionButton: FloatingActionButton.extended(
@@ -2499,6 +2547,7 @@ jobs:
                                   ButtonSegment(value: 'inst', label: Text('اقساط سررسید')),
                                 ],
                                 selected: {tab},
+                                style: segStyle(context, uiStyles.of('loan_top')),
                                 onSelectionChanged: (s) => setState(() => tab = s.first),
                               ),
                             ),
@@ -2523,7 +2572,7 @@ jobs:
             Widget _sumCard(BuildContext c, String t, int v, Color col) =>
                 topBox(
                     c,
-                    uiStyles.of('loan_top').glass,
+                    'loan_top',
                     col,
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(t, style: const TextStyle(fontSize: 12)),
@@ -2611,6 +2660,15 @@ jobs:
             const LoanDetailPage(this.id, {super.key});
 
             @override
+            Widget build(BuildContext context) => GlassFrame(
+                keys: const ['loand_head', 'loand_card'], child: _LoanDetailBody(id));
+          }
+
+          class _LoanDetailBody extends StatelessWidget {
+            final String id;
+            const _LoanDetailBody(this.id);
+
+            @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
                 listenable: Listenable.merge([store, unit, calendarMode, uiStyles]),
@@ -2635,10 +2693,15 @@ jobs:
                             });
                             if (done && c.mounted) Navigator.pop(c);
                           }),
+                      styleGear(c, 'تنظیمات ظاهر جزئیات وام', const [
+                        StyleGroup('loand_head', 'کادر بالای صفحه (پیشرفت وام)'),
+                        StyleGroup('loand_card', 'کادرهای پایین (اطلاعات و اقساط)', compress: true),
+                      ], shared: true),
                     ]),
                     body: ListView(padding: const EdgeInsets.all(16), children: [
-                      card(
+                      cardBox(
                         c,
+                        'loand_head',
                         Row(children: [
                           SizedBox(
                             width: 96,
@@ -2662,8 +2725,9 @@ jobs:
                           ])),
                         ]),
                       ),
-                      card(
+                      cardBox(
                         c,
+                        'loand_card',
                         Column(children: [
                           kv(l.taken ? 'وام‌دهنده' : 'وام‌گیرنده', l.lender.isEmpty ? '—' : l.lender),
                           kv('نوع', l.taken ? 'وام گرفته‌شده' : 'وام داده‌شده'),
@@ -2685,8 +2749,9 @@ jobs:
                         final d = Loan.dueOf(i);
                         final lateFlag = !paid && d != null && d.isBefore(_today0());
                         final ic = paid ? cRec : (lateFlag ? cPay : cWarn);
-                        return card(
+                        return cardBox(
                           c,
+                          'loand_card',
                           Row(children: [
                             CircleAvatar(
                                 radius: 16,
@@ -2705,7 +2770,7 @@ jobs:
                             ])),
                             badge(paid ? 'پرداخت‌شده' : (lateFlag ? 'معوق' : 'در انتظار'), ic),
                           ]),
-                          pad: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          vpad: 10,
                           onTap: () => toggleInstallment(c, i),
                         );
                       }),
@@ -2975,13 +3040,15 @@ jobs:
                   IconButton(
                     tooltip: 'تنظیمات ظاهر',
                     icon: const Icon(Icons.settings_outlined),
-                    onPressed: () => showPageStyleSheet(context,
+                    onPressed: () => showGroupsSheet(context,
                         title: 'تنظیمات ظاهر صفحه چک‌ها',
-                        cardKey: 'cheq_card',
-                        topKey: 'cheq_top',
-                        cardLabel: 'کادر چک‌های ثبت‌شده',
-                        topGlassLabel: 'شیشه‌ای کردن ویجت‌های بالای صفحه چک‌ها',
-                        cardGlassLabel: 'شیشه‌ای کردن کادر چک‌های ثبت‌شده'),
+                        groups: const [
+                          StyleGroup('cheq_top', 'کادرهای بالای صفحه (جمع‌ها و تب‌ها)'),
+                          StyleGroup('cheq_chip', 'کادرهای فیلتر (همه انواع / همه وضعیت‌ها)',
+                              textSize: false),
+                          StyleGroup('cheq_card', 'کادر چک‌های ثبت‌شده', compress: true),
+                        ],
+                        sharedBorder: true),
                   ),
                 ]),
                 floatingActionButton: FloatingActionButton.extended(
@@ -3026,6 +3093,7 @@ jobs:
                                   ButtonSegment(value: 'issued', label: Text('چک‌های پرداختی')),
                                 ],
                                 selected: {dir},
+                                style: segStyle(context, uiStyles.of('cheq_top')),
                                 onSelectionChanged: (s) => setState(() {
                                   dir = s.first;
                                   st = 'all';
@@ -3040,24 +3108,25 @@ jobs:
                               Expanded(child: _sum(c, 'سررسید گذشته', '${faDigits('$lateFlag')} چک', cWarn)),
                             ]),
                             const SizedBox(height: 12),
-                            GWrap(glass: uiStyles.of('cheq_top').glass, spacing: 8, runSpacing: 4, children: [
+                            GWrap(glass: uiStyles.of('cheq_chip').glass, spacing: 8, runSpacing: 4, children: [
                               for (final k in const [
                                 ['all', 'همهٔ انواع'],
                                 ['dated', 'تاریخ‌دار'],
                                 ['guarantee', 'ضمانتی'],
                               ])
-                                ChoiceChip(
+                                StyledChip(styleKey: 'cheq_chip', 
                                     label: Text(k[1]),
                                     selected: kind == k[0],
                                     onSelected: (_) => setState(() => kind = k[0])),
                             ]),
-                            GWrap(glass: uiStyles.of('cheq_top').glass, spacing: 8, runSpacing: 4, children: [
-                              ChoiceChip(
+                            const SizedBox(height: 10),
+                            GWrap(glass: uiStyles.of('cheq_chip').glass, spacing: 8, runSpacing: 4, children: [
+                              StyledChip(styleKey: 'cheq_chip', 
                                   label: const Text('همهٔ وضعیت‌ها'),
                                   selected: st == 'all',
                                   onSelected: (_) => setState(() => st = 'all')),
                               for (final s in stOpts)
-                                ChoiceChip(
+                                StyledChip(styleKey: 'cheq_chip', 
                                     label: Text(chequeStatusLabel(s, dir == 'received')),
                                     selected: st == s,
                                     onSelected: (_) => setState(() => st = s)),
@@ -3078,7 +3147,7 @@ jobs:
             Widget _sum(BuildContext c, String t, String v, Color col) =>
                 topBox(
                     c,
-                    uiStyles.of('cheq_top').glass,
+                    'cheq_top',
                     col,
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(t, style: const TextStyle(fontSize: 12)),
@@ -3134,6 +3203,15 @@ jobs:
             final String id;
             const ChequeDetailPage(this.id, {super.key});
 
+            @override
+            Widget build(BuildContext context) => GlassFrame(
+                keys: const ['cheqd_head', 'cheqd_chip', 'cheqd_card'], child: _ChequeDetailBody(id));
+          }
+
+          class _ChequeDetailBody extends StatelessWidget {
+            final String id;
+            const _ChequeDetailBody(this.id);
+
             Future<void> _setStatus(BuildContext c, Cheque x, String s) async {
               await run(c, () async {
                 await sb.from('cheques').update({
@@ -3170,10 +3248,16 @@ jobs:
                             });
                             if (done && c.mounted) Navigator.pop(c);
                           }),
+                      styleGear(c, 'تنظیمات ظاهر جزئیات چک', const [
+                        StyleGroup('cheqd_head', 'کادر بالای صفحه (مبلغ و وضعیت)'),
+                        StyleGroup('cheqd_card', 'کادر اطلاعات چک', compress: true),
+                        StyleGroup('cheqd_chip', 'کادرهای تغییر وضعیت', textSize: false),
+                      ], shared: true),
                     ]),
                     body: ListView(padding: const EdgeInsets.all(16), children: [
-                      card(
+                      cardBox(
                         c,
+                        'cheqd_head',
                         Column(children: [
                           Icon(x.guarantee ? Icons.shield_outlined : Icons.receipt_long,
                               size: 40, color: x.statusColor),
@@ -3189,8 +3273,9 @@ jobs:
                           ],
                         ]),
                       ),
-                      card(
+                      cardBox(
                         c,
+                        'cheqd_card',
                         Column(children: [
                           kv('نوع', x.received ? 'دریافتی' : 'پرداختی'),
                           kv('نوع چک', x.guarantee ? 'ضمانتی' : 'تاریخ‌دار'),
@@ -3207,9 +3292,10 @@ jobs:
                         ]),
                       ),
                       sec(c, 'تغییر وضعیت'),
-                      Wrap(spacing: 8, runSpacing: 8, children: [
+                      GWrap(glass: uiStyles.of('cheqd_chip').glass, spacing: 8, runSpacing: 8, children: [
                         for (final s in opts)
-                          ChoiceChip(
+                          StyledChip(
+                            styleKey: 'cheqd_chip',
                             label: Text(chequeStatusLabel(s, x.received)),
                             selected: x.status == s,
                             selectedColor: chequeStatusColor(s).withValues(alpha: .25),
@@ -3505,7 +3591,30 @@ jobs:
               }
             }
 
-            BoxStyle of(String k) => _m.putIfAbsent(k, () => BoxStyle());
+            static double defOp(String k) =>
+                (k == 'cheq_top' || k == 'loan_top' || k.endsWith('_chip')) ? .12 : 1;
+
+            BoxStyle of(String k) => _m.putIfAbsent(k, () => BoxStyle(opacity: defOp(k)));
+
+            bool isPlain(String k) {
+              final s = of(k);
+              return s.color == null &&
+                  s.textColor == null &&
+                  s.textScale == 1 &&
+                  s.opacity == defOp(k) &&
+                  !s.glass &&
+                  !s.border &&
+                  s.size == 1;
+            }
+
+            Future<void> changeMany(List<String> keys, void Function(BoxStyle s) f) async {
+              for (final k in keys) {
+                f(of(k));
+              }
+              notifyListeners();
+              await _save();
+            }
+
             List<double> rect(String k) => _r[k] ?? defaultRect(k);
 
             Future<void> load() async {
@@ -3547,7 +3656,7 @@ jobs:
 
             Future<void> reset(List<String> keys) async {
               for (final k in keys) {
-                _m[k] = BoxStyle();
+                _m[k] = BoxStyle(opacity: defOp(k));
               }
               notifyListeners();
               await _save();
@@ -3628,10 +3737,11 @@ jobs:
             return box;
           }
 
-          Widget cardBox(BuildContext c, String key, Widget child, {VoidCallback? onTap}) {
+          Widget cardBox(BuildContext c, String key, Widget child,
+              {VoidCallback? onTap, double vpad = 16}) {
             final s = uiStyles.of(key);
             final gap = math.max(3.0, 12 * s.size);
-            final vp = math.max(2.0, 16 * s.size);
+            final vp = math.max(2.0, vpad * s.size);
             return Padding(
               padding: EdgeInsets.only(bottom: gap),
               child: styledBox(c, s, Theme.of(c).colorScheme.surfaceContainerLow, child,
@@ -3639,8 +3749,20 @@ jobs:
             );
           }
 
-          Widget topBox(BuildContext c, bool glass, Color col, Widget child) =>
-              styledBox(c, BoxStyle(glass: glass, opacity: glass ? .6 : .12), col, child, radius: 18);
+          Widget topBox(BuildContext c, String key, Color col, Widget child) {
+            final s = uiStyles.of(key);
+            final eff = BoxStyle(
+                color: s.color,
+                textColor: s.textColor,
+                textScale: s.textScale,
+                opacity: s.glass ? math.min(1.0, s.opacity + .25) : s.opacity,
+                glass: s.glass,
+                border: s.border,
+                bw: s.bw,
+                bc: s.bc,
+                bo: s.bo);
+            return styledBox(c, eff, col, child, radius: 18);
+          }
 
           /// دور ویجت‌هایی مثل دکمه‌های انتخاب و چیپ‌ها، حالت شیشه‌ای می‌دهد
           Widget glassWrap(bool glass, Widget child) {
@@ -3826,7 +3948,7 @@ jobs:
 
           class StyleEditor extends StatelessWidget {
             final String k;
-            final bool size, glass, border;
+            final bool size, glass, border, textSize;
             final String sizeLabel;
             final double sizeMin, sizeMax;
             const StyleEditor(this.k,
@@ -3834,6 +3956,7 @@ jobs:
                 this.size = false,
                 this.glass = false,
                 this.border = false,
+                this.textSize = true,
                 this.sizeLabel = 'اندازهٔ کادر',
                 this.sizeMin = .6,
                 this.sizeMax = 1.6});
@@ -3847,8 +3970,9 @@ jobs:
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     _colorRow(c, 'رنگ کادر', s.color, (v) => uiStyles.change(k, (x) => x.color = v)),
                     _colorRow(c, 'رنگ متن', s.textColor, (v) => uiStyles.change(k, (x) => x.textColor = v)),
-                    _sliderRow('اندازهٔ متن', s.textScale, .8, 1.6,
-                        (v) => uiStyles.change(k, (x) => x.textScale = v)),
+                    if (textSize)
+                      _sliderRow('اندازهٔ متن', s.textScale, .8, 1.6,
+                          (v) => uiStyles.change(k, (x) => x.textScale = v)),
                     _sliderRow('شفافیت کادر', s.opacity, .1, 1,
                         (v) => uiStyles.change(k, (x) => x.opacity = v)),
                     if (size)
@@ -3975,11 +4099,12 @@ jobs:
           class HomeBoxesPage extends StatelessWidget {
             const HomeBoxesPage({super.key});
 
-            static const _keys = ['hero', 'loans', 'cheques'];
+            static const _keys = ['hero', 'loans', 'cheques', 'contacts'];
             static const _names = {
               'hero': 'کادر آمار طلب و بدهی (بالای صفحه)',
               'loans': 'کادر وام‌ها',
               'cheques': 'کادر چک‌ها',
+              'contacts': 'کادر اشخاص (لیست پایین صفحه)',
             };
 
             @override
@@ -4001,8 +4126,14 @@ jobs:
                           childrenPadding: const EdgeInsets.only(top: 8),
                           title: Text(_names[k]!, style: const TextStyle(fontWeight: FontWeight.bold)),
                           children: [
-                            RectEditor(k),
-                            StyleEditor('home_$k', glass: true),
+                            if (k != 'contacts') RectEditor(k),
+                            StyleEditor('home_$k',
+                                glass: true,
+                                border: true,
+                                size: k == 'contacts',
+                                sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
+                                sizeMin: .2,
+                                sizeMax: 1.6),
                             Align(
                               alignment: AlignmentDirectional.centerStart,
                               child: TextButton.icon(
@@ -4439,6 +4570,176 @@ jobs:
             @override
             Widget build(BuildContext context) =>
                 glassWrap(glass, Wrap(spacing: spacing, runSpacing: runSpacing, children: children));
+          }
+
+
+          // ---------- ابزارهای مشترک تنظیمات ظاهر صفحه‌ها ----------
+          class StyleGroup {
+            final String key, label;
+            final bool compress, textSize;
+            const StyleGroup(this.key, this.label, {this.compress = false, this.textSize = true});
+          }
+
+          class SharedBorderEditor extends StatelessWidget {
+            final List<String> keys;
+            const SharedBorderEditor(this.keys, {super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) {
+                  final s = uiStyles.of(keys.first);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('خط دور کادرها', style: TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: const Text('دور تا دور همهٔ کادرهای این صفحه (بالا و پایین) خط کشیده می‌شود'),
+                      value: s.border,
+                      onChanged: (v) => uiStyles.changeMany(keys, (x) => x.border = v),
+                    ),
+                    if (s.border) ...[
+                      _sliderNum('ضخامت خط', s.bw, .5, 8, (v) => uiStyles.changeMany(keys, (x) => x.bw = v)),
+                      _colorRow(c, 'رنگ خط', s.bc, (v) => uiStyles.changeMany(keys, (x) => x.bc = v)),
+                      _sliderRow('شفافیت خط', s.bo, .1, 1, (v) => uiStyles.changeMany(keys, (x) => x.bo = v)),
+                    ],
+                  ]);
+                },
+              );
+            }
+          }
+
+          /// برگهٔ تنظیمات: برای هر گروه کادر یک بخش جدا (رنگ، شفافیت، شیشه‌ای، فشردگی، ...)
+          void showGroupsSheet(BuildContext c,
+              {required String title, required List<StyleGroup> groups, bool sharedBorder = false}) {
+            final keys = groups.map((g) => g.key).toList();
+            showModalBottomSheet(
+              context: c,
+              isScrollControlled: true,
+              showDragHandle: true,
+              builder: (ctx) => SafeArea(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * .88),
+                  child: ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 24), children: [
+                    Text(title,
+                        style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    for (final g in groups)
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: const EdgeInsets.only(bottom: 8),
+                        title: Text(g.label, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        children: [
+                          StyleEditor(g.key,
+                              glass: true,
+                              border: !sharedBorder,
+                              size: g.compress,
+                              textSize: g.textSize,
+                              sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
+                              sizeMin: .2,
+                              sizeMax: 1.6),
+                        ],
+                      ),
+                    if (sharedBorder)
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: const EdgeInsets.only(bottom: 8),
+                        title: const Text('خط دور همهٔ کادرها', style: TextStyle(fontWeight: FontWeight.bold)),
+                        children: [SharedBorderEditor(keys)],
+                      ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => uiStyles.reset(keys),
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('بازگشت به تنظیمات پیش‌فرض این صفحه'),
+                    ),
+                  ]),
+                ),
+              ),
+            );
+          }
+
+          Widget styleGear(BuildContext c, String title, List<StyleGroup> groups, {bool shared = false}) =>
+              IconButton(
+                tooltip: 'تنظیمات ظاهر',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () => showGroupsSheet(c, title: title, groups: groups, sharedBorder: shared),
+              );
+
+          ButtonStyle segStyle(BuildContext c, BoxStyle s) => SegmentedButton.styleFrom(
+                selectedBackgroundColor:
+                    s.color != null ? Color(s.color!).withValues(alpha: .35) : null,
+                side: s.border
+                    ? BorderSide(
+                        color: (s.bc != null ? Color(s.bc!) : Theme.of(c).colorScheme.primary)
+                            .withValues(alpha: s.bo),
+                        width: s.bw)
+                    : null,
+              );
+
+          class StyledChip extends StatelessWidget {
+            final String styleKey;
+            final Widget label;
+            final bool selected;
+            final ValueChanged<bool>? onSelected;
+            final Color? selectedColor;
+            const StyledChip(
+                {super.key,
+                required this.styleKey,
+                required this.label,
+                required this.selected,
+                this.onSelected,
+                this.selectedColor});
+
+            @override
+            Widget build(BuildContext context) {
+              final s = uiStyles.of(styleKey);
+              final base = s.color != null ? Color(s.color!) : null;
+              final side = s.border
+                  ? BorderSide(
+                      color: (s.bc != null ? Color(s.bc!) : Theme.of(context).colorScheme.primary)
+                          .withValues(alpha: s.bo),
+                      width: s.bw)
+                  : null;
+              return ChoiceChip(
+                label: label,
+                selected: selected,
+                onSelected: onSelected,
+                backgroundColor: base?.withValues(alpha: s.opacity),
+                selectedColor: base != null
+                    ? base.withValues(alpha: math.min(1.0, s.opacity + .35))
+                    : selectedColor,
+                side: side,
+                labelStyle: s.textColor != null ? TextStyle(color: Color(s.textColor!)) : null,
+              );
+            }
+          }
+
+          InputDecoration fieldDeco(BuildContext c, String key, String hint, {IconData? icon}) {
+            final d = deco(hint, icon: icon);
+            if (uiStyles.isPlain(key)) return d;
+            final s = uiStyles.of(key);
+            final base = s.color != null ? Color(s.color!) : Theme.of(c).colorScheme.surfaceContainerLow;
+            final fill = s.glass
+                ? Colors.white.withValues(alpha: .3 * s.opacity)
+                : base.withValues(alpha: s.opacity);
+            final bs = s.border
+                ? BorderSide(
+                    color: (s.bc != null ? Color(s.bc!) : Theme.of(c).colorScheme.primary)
+                        .withValues(alpha: s.bo),
+                    width: s.bw)
+                : (s.glass
+                    ? BorderSide(color: Colors.white.withValues(alpha: .5))
+                    : BorderSide.none);
+            final ob = OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: bs);
+            return d.copyWith(filled: true, fillColor: fill, border: ob, enabledBorder: ob, focusedBorder: ob);
+          }
+
+          TextStyle? fieldStyle(String key) {
+            if (uiStyles.isPlain(key)) return null;
+            final s = uiStyles.of(key);
+            return TextStyle(
+                color: s.textColor != null ? Color(s.textColor!) : null, fontSize: 16 * s.textScale);
           }
 
           // ---------- backup & export ----------
@@ -4892,7 +5193,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return ListenableBuilder(
-                listenable: Listenable.merge([store, unit]),
+                listenable: Listenable.merge([store, unit, uiStyles]),
                 builder: (c, _) {
                   final email = sb.auth.currentUser?.email ?? '';
                   return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), children: [
