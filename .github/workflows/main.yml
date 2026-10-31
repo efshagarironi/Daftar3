@@ -1019,7 +1019,7 @@ jobs:
 
             @override
             Widget build(BuildContext context) => GlassFrame(
-                keys: i == 0 ? const ['home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : (i == 1 ? const ['ppl_search', 'ppl_card'] : const []),
+                keys: i == 0 ? const ['home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : const [],
                 child: PopScope(
                     canPop: i == 0,
                     onPopInvokedWithResult: (didPop, result) {
@@ -1032,12 +1032,11 @@ jobs:
                 body: SafeArea(
                   child: IndexedStack(index: i, children: const [
                     DashboardPage(),
-                    PeoplePage(),
                     BackupPage(),
                     SettingsPage(),
                   ]),
                 ),
-                floatingActionButton: i <= 1
+                floatingActionButton: i == 0
                     ? FloatingActionButton.extended(
                         backgroundColor: i == 0 ? const Color(0xFF4A90E8) : null,
                         foregroundColor: i == 0 ? Colors.white : null,
@@ -1051,7 +1050,6 @@ jobs:
                   onDestinationSelected: (v) => setState(() => i = v),
                   destinations: const [
                     NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'خانه'),
-                    NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'اشخاص'),
                     NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
                     NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
                   ],
@@ -1257,80 +1255,109 @@ jobs:
                   ),
                 );
 
-            Widget _hero(BuildContext c, int rec, int pay, int net) {
-              final hs = uiStyles.of('home_hero');
-              final tcol = hs.textColor != null ? Color(hs.textColor!) : Colors.white;
-              Widget side(String label, int v, IconData ic, Color tile, Color border, VoidCallback f) =>
-                  Expanded(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(16),
-                      onTap: f,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                                color: tile,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: border, width: 1.5)),
-                            child: Icon(ic, color: Colors.white, size: 24),
-                          ),
-                          const SizedBox(height: 10),
-                          Text(label, style: TextStyle(color: tcol, fontSize: 12)),
-                          const SizedBox(height: 6),
-                          Text(v == 0 ? '۰' : faDigits(group(v)),
-                              style: TextStyle(color: tcol, fontSize: 16, fontWeight: FontWeight.bold)),
-                          Text(unit.value, style: TextStyle(color: tcol, fontSize: 12)),
-                        ]),
-                      ),
-                    ),
-                  );
-              final msg = net > 0
-                  ? '${money(net)} طلبکار هستید'
-                  : net < 0
-                      ? '${money(-net)} بدهکار هستید'
-                      : 'تراز شما صفر است';
-              final base = hs.color != null ? Color(hs.color!) : null;
-              return styledBox(
-                c,
-                hs,
-                _kNavy,
-                LayoutBuilder(
-                  builder: (c, bc) => FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: SizedBox(
-                      width: bc.maxWidth,
+          Widget _hero(BuildContext c, int rec, int pay, int net) {
+            final hs = uiStyles.of('home_hero');
+            final tcol = hs.textColor != null ? Color(hs.textColor!) : Colors.white;
+            const sideW = 92.0;
+            Widget side(String label, int v, IconData ic, Color tile, Color border, VoidCallback f) => InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: f,
+                  child: SizedBox(
+                    width: sideW,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          side('طلبکاری‌های من', rec, Icons.trending_up, _kBlue.withValues(alpha: .55),
-                              const Color(0xFF6FB0F5), _guard(() => _list(c, 'rec'))),
-                          Container(
-                            width: 86,
-                            height: 86,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: const Color(0xFF2B64B0),
-                                border: Border.all(color: _kBlue, width: 12)),
-                            child: Icon(net < 0 ? Icons.trending_down : Icons.trending_up,
-                                color: Colors.white, size: 30),
-                          ),
-                          side('بدهکاری‌های من', pay, Icons.trending_down, const Color(0xFF8A4E8C),
-                              const Color(0xFFD63864), _guard(() => _list(c, 'pay'))),
-                        ]),
-                        const SizedBox(height: 12),
-                        Text(msg, style: TextStyle(color: tcol, fontSize: 14)),
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                              color: tile,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: border, width: 1.5)),
+                          child: Icon(ic, color: Colors.white, size: 22),
+                        ),
+                        const SizedBox(height: 6),
+                        FittedBox(
+                            fit: BoxFit.scaleDown, child: Text(label, style: TextStyle(color: tcol, fontSize: 11))),
+                        const SizedBox(height: 3),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(v == 0 ? '۰' : faDigits(group(v)),
+                              style: TextStyle(color: tcol, fontSize: 15, fontWeight: FontWeight.bold)),
+                        ),
+                        Text(unit.value, style: TextStyle(color: tcol, fontSize: 11)),
                       ]),
                     ),
                   ),
+                );
+            final status = net > 0 ? 'طلبکار هستید' : (net < 0 ? 'بدهکار هستید' : 'تراز شما صفر است');
+            final base = hs.color != null ? Color(hs.color!) : null;
+            return styledBox(
+              c,
+              hs,
+              _kNavy,
+              LayoutBuilder(
+                builder: (c, bc) => FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: SizedBox(
+                    width: bc.maxWidth,
+                    child: Stack(alignment: Alignment.topCenter, children: [
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        side('طلبکاری‌های من', rec, Icons.trending_up, _kBlue.withValues(alpha: .55),
+                            const Color(0xFF6FB0F5), _guard(() => _list(c, 'rec'))),
+                        side('بدهکاری‌های من', pay, Icons.trending_down, const Color(0xFF8A4E8C),
+                            const Color(0xFFD63864), _guard(() => _list(c, 'pay'))),
+                      ]),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: SizedBox(
+                          width: math.max(80.0, bc.maxWidth - 2 * sideW - 8),
+                          child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            Container(
+                              width: 58,
+                              height: 58,
+                              decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: const Color(0xFF2B64B0),
+                                  border: Border.all(color: _kBlue, width: 6)),
+                              child: Icon(net < 0 ? Icons.trending_down : Icons.trending_up,
+                                  color: Colors.white, size: 26),
+                            ),
+                            const SizedBox(height: 6),
+                            if (net != 0)
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(money(net.abs()),
+                                    style: TextStyle(color: tcol, fontSize: 14, fontWeight: FontWeight.bold)),
+                              ),
+                            Text(status, style: TextStyle(color: tcol, fontSize: 12)),
+                          ]),
+                        ),
+                      ),
+                    ]),
+                  ),
                 ),
-                radius: 26,
-                center: true,
-                pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                colors: base == null ? const [_kBlue, _kNavy] : [base, _darken(base)],
-              );
-            }
+              ),
+              radius: 26,
+              center: true,
+              pad: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              colors: base == null ? const [_kBlue, _kNavy] : [base, _darken(base)],
+            );
+          }
+
+          Widget _peopleFrame(BuildContext c, List<Widget> kids) {
+            final fs = uiStyles.of('home_pframe');
+            final on = fs.border;
+            final lineCol = (fs.bc != null ? Color(fs.bc!) : Theme.of(c).colorScheme.primary).withValues(alpha: fs.bo);
+            return CustomPaint(
+              painter: on ? _ThreeSidePainter(lineCol, fs.bw, 26) : null,
+              child: Container(
+                constraints: BoxConstraints(minHeight: MediaQuery.of(c).size.height * .5),
+                padding: EdgeInsets.fromLTRB(on ? 10 + fs.bw : 0, on ? 14 + fs.bw : 0, on ? 10 + fs.bw : 0, 100),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: kids),
+              ),
+            );
+          }
 
             Widget _big(BuildContext c, String k, String t, Color col, VoidCallback f) {
               final s = uiStyles.of('home_$k');
@@ -1513,7 +1540,7 @@ jobs:
                       physics: editing
                           ? const NeverScrollableScrollPhysics()
                           : const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                       children: [
                         Row(children: [
                           Container(
@@ -1566,6 +1593,7 @@ jobs:
                         if (editing) _editBar(c),
                         _canvas(c, rec, pay, net),
                         const SizedBox(height: 14),
+                        _peopleFrame(c, [
                         if (rows.isEmpty) emptyBox('شخصی ثبت نشده است'),
                         ...rows.map((e) {
                           final p = e.key, n = e.value;
@@ -1606,6 +1634,7 @@ jobs:
                             onTap: () => _open(c, PersonPage('${p['id']}')),
                           );
                         }),
+                        ]),
                       ],
                     ),
                   ));
@@ -1924,7 +1953,7 @@ jobs:
                         },
                       ),
                       styleGear(c, 'تنظیمات ظاهر جزئیات شخص', const [
-                        StyleGroup('pers_head', 'کادر بالای صفحه (مانده شخص)'),
+                        StyleGroup('pers_head', 'کادر بالای صفحه (مانده شخص) — رنگ متن'),
                         StyleGroup('pers_card', 'کادر حساب‌های شخص', compress: true),
                       ]),
                     ]),
@@ -1940,7 +1969,9 @@ jobs:
                             Text(net == 0 ? 'تسویه' : (net > 0 ? 'طلب شما: ' : 'بدهی شما: ') + money(net.abs()),
                                 style: Theme.of(c).textTheme.titleLarge?.copyWith(
                                     fontWeight: FontWeight.bold,
-                                    color: net > 0 ? cRec : (net < 0 ? cPay : null))),
+                                    color: uiStyles.of('pers_head').textColor != null
+                                        ? Color(uiStyles.of('pers_head').textColor!)
+                                        : (net > 0 ? cRec : (net < 0 ? cPay : null)))),
                             if (p['phone'] != null) Text('تلفن: ${faDigits('${p['phone']}')}'),
                             if (p['notes'] != null) Text('${p['notes']}'),
                           ])),
@@ -2513,7 +2544,13 @@ jobs:
           }
 
           class _LoansPageState extends State<LoansPage> {
-            String tab = 'loans';
+            String tab = 'loans', q = '';
+
+            bool _match(Loan l) {
+              if (q.isEmpty) return true;
+              final hay = [l.title, l.lender, '${l.m['notes'] ?? ''}', '${l.principal}', '${l.instAmount}'].join(' ');
+              return normQ(hay).contains(normQ(q));
+            }
 
             @override
             Widget build(BuildContext context) => GlassFrame(
@@ -2521,7 +2558,15 @@ jobs:
 
             Widget _scaffold(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: const Text('وام و اقساط'), actions: [
+                appBar: AppBar(
+                  centerTitle: false,
+                  titleSpacing: 0,
+                  title: Row(children: [
+                    const Text('وام و اقساط'),
+                    const SizedBox(width: 12),
+                    Expanded(child: Builder(builder: (cx) => appBarSearch(cx, 'جستجوی وام‌ها', (v) => setState(() => q = v.trim())))),
+                  ]),
+                  actions: [
                   IconButton(
                     tooltip: 'تنظیمات ظاهر',
                     icon: const Icon(Icons.settings_outlined),
@@ -2550,8 +2595,9 @@ jobs:
                       final loans = store.loans;
                       final taken = loans.where((l) => l.taken).fold<int>(0, (s, l) => s + l.remaining);
                       final given = loans.where((l) => !l.taken).fold<int>(0, (s, l) => s + l.remaining);
+                      final shown = loans.where(_match).toList();
                       final rows = <MapEntry<Loan, Map<String, dynamic>>>[];
-                      for (final l in loans) {
+                      for (final l in shown) {
                         for (final i in l.inst) {
                           if (!Loan.isPaid(i)) rows.add(MapEntry(l, i));
                         }
@@ -2571,23 +2617,18 @@ jobs:
                               [
                                 CanvasItem(
                                     'tabs',
-                                    glassWrap(
-                                      uiStyles.of('loan_top').glass,
-                                      SegmentedButton<String>(
-                                        segments: const [
-                                          ButtonSegment(value: 'loans', label: Text('وام‌های من')),
-                                          ButtonSegment(value: 'inst', label: Text('اقساط سررسید')),
-                                        ],
-                                        selected: {tab},
-                                        style: segStyle(context, uiStyles.of('loan_top')),
-                                        onSelectionChanged: (s) => setState(() => tab = s.first),
-                                      ),
+                                    StyledSegments(
+                                      styleKey: 'loan_top',
+                                      values: const ['loans', 'inst'],
+                                      labels: const ['وام‌های من', 'اقساط سررسید'],
+                                      selected: tab,
+                                      onChanged: (v) => setState(() => tab = v),
                                     )),
                               ],
                             ]),
                             if (tab == 'loans') ...[
-                              if (loans.isEmpty) emptyBox('هنوز وامی ثبت نشده است'),
-                              ...loans.map((l) => _loanTile(c, l)),
+                              if (shown.isEmpty) emptyBox(loans.isEmpty ? 'هنوز وامی ثبت نشده است' : 'موردی یافت نشد'),
+                              ...shown.map((l) => _loanTile(c, l)),
                             ] else ...[
                               if (rows.isEmpty) emptyBox('قسط پرداخت‌نشده‌ای ندارید ✨'),
                               ...rows.map((e) => _instTile(c, e.key, e.value)),
@@ -3078,7 +3119,14 @@ jobs:
           }
 
           class _ChequesPageState extends State<ChequesPage> {
-            String dir = 'received', kind = 'all', st = 'all';
+            String dir = 'received', kind = 'all', st = 'all', q = '';
+
+            bool _match(Cheque x) {
+              if (q.isEmpty) return true;
+              final hay = [x.who, x.number, x.sayad, x.bank, x.branch, '${x.m['notes'] ?? ''}', '${x.amount}', x.statusLabel]
+                  .join(' ');
+              return normQ(hay).contains(normQ(q));
+            }
 
             @override
             Widget build(BuildContext context) => GlassFrame(
@@ -3086,7 +3134,15 @@ jobs:
 
             Widget _scaffold(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: const Text('دفتر چک‌ها'), actions: [
+                appBar: AppBar(
+                  centerTitle: false,
+                  titleSpacing: 0,
+                  title: Row(children: [
+                    const Text('دفتر چک‌ها'),
+                    const SizedBox(width: 12),
+                    Expanded(child: Builder(builder: (cx) => appBarSearch(cx, 'جستجوی چک‌ها', (v) => setState(() => q = v.trim())))),
+                  ]),
+                  actions: [
                   IconButton(
                     tooltip: 'تنظیمات ظاهر',
                     icon: const Icon(Icons.settings_outlined),
@@ -3121,6 +3177,7 @@ jobs:
                       final list = mine
                           .where((x) => kind == 'all' || (kind == 'guarantee') == x.guarantee)
                           .where((x) => st == 'all' || x.status == st)
+                          .where(_match)
                           .toList()
                         ..sort((a, b) {
                           if (a.pending != b.pending) return a.pending ? -1 : 1;
@@ -3140,20 +3197,15 @@ jobs:
                               [
                                 CanvasItem(
                                     'tabs',
-                                    glassWrap(
-                                      uiStyles.of('cheq_top').glass,
-                                      SegmentedButton<String>(
-                                        segments: const [
-                                          ButtonSegment(value: 'received', label: Text('چک‌های دریافتی')),
-                                          ButtonSegment(value: 'issued', label: Text('چک‌های پرداختی')),
-                                        ],
-                                        selected: {dir},
-                                        style: segStyle(context, uiStyles.of('cheq_top')),
-                                        onSelectionChanged: (s) => setState(() {
-                                          dir = s.first;
-                                          st = 'all';
-                                        }),
-                                      ),
+                                    StyledSegments(
+                                      styleKey: 'cheq_top',
+                                      values: const ['received', 'issued'],
+                                      labels: const ['چک‌های دریافتی', 'چک‌های پرداختی'],
+                                      selected: dir,
+                                      onChanged: (v) => setState(() {
+                                        dir = v;
+                                        st = 'all';
+                                      }),
                                     )),
                               ],
                               [
@@ -3177,7 +3229,7 @@ jobs:
                                         for (final s in stOpts)
                                           ChipSpec(chequeStatusLabel(s, dir == 'received'), st == s,
                                               () => setState(() => st = s)),
-                                      ]),
+                                      ], joined: true),
                                     ])),
                               ],
                             ]),
@@ -3353,27 +3405,30 @@ jobs:
                         [
                           CanvasItem(
                               'status',
-                              filterBox(c, 'cheqd_chip', [
-                                const Padding(
-                                  padding: EdgeInsets.only(bottom: 6, right: 6, left: 6),
-                                  child: Row(children: [
-                                    Icon(Icons.swap_horiz),
-                                    SizedBox(width: 8),
-                                    Text('تغییر وضعیت', style: TextStyle(fontWeight: FontWeight.bold)),
-                                  ]),
-                                ),
-                                Wrap(spacing: 8, runSpacing: 6, children: [
-                                  for (final s in opts)
-                                    StyledChip(
-                                      styleKey: 'cheqd_chip',
-                                      inBox: true,
-                                      label: Text(chequeStatusLabel(s, x.received)),
-                                      selected: x.status == s,
-                                      selectedColor: chequeStatusColor(s).withValues(alpha: .25),
-                                      onSelected: x.status == s ? null : (_) => _setStatus(c, x, s),
-                                    ),
-                                ]),
-                              ])),
+                              filterBox(
+                                c,
+                                'cheqd_chip',
+                                [
+                                  const Padding(
+                                    padding: EdgeInsets.only(bottom: 10, right: 14, left: 14),
+                                    child: Row(children: [
+                                      Icon(Icons.swap_horiz),
+                                      SizedBox(width: 8),
+                                      Text('تغییر وضعیت', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    ]),
+                                  ),
+                                  chipRow(
+                                      'cheqd_chip',
+                                      [
+                                        for (final s in opts)
+                                          ChipSpec(chequeStatusLabel(s, x.received), x.status == s,
+                                              () => _setStatus(c, x, s),
+                                              color: chequeStatusColor(s).withValues(alpha: .25)),
+                                      ],
+                                      joined: true,
+                                      flush: true),
+                                ],
+                                pad: const EdgeInsets.only(top: 12))),
                         ],
                       ]),
                     ]),
@@ -3657,11 +3712,11 @@ jobs:
             static List<double> defaultRect(String k) {
               switch (k) {
                 case 'hero':
-                  return [0, 0, 1, 190];
+                  return [0, 0, 1, 150];
                 case 'cheques':
-                  return [0, 204, .48, 72];
+                  return [0, 164, .48, 72];
                 default:
-                  return [.52, 204, .48, 72];
+                  return [.52, 164, .48, 72];
               }
             }
 
@@ -4194,6 +4249,69 @@ jobs:
             }
           }
 
+          class _ThreeSidePainter extends CustomPainter {
+            final Color color;
+            final double width, radius;
+            const _ThreeSidePainter(this.color, this.width, this.radius);
+
+            @override
+            void paint(Canvas canvas, Size size) {
+              final h = width / 2;
+              final r = math.max(radius, width + 1);
+              final p = Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = width
+                ..color = color;
+              final path = Path()
+                ..moveTo(h, size.height)
+                ..lineTo(h, r)
+                ..arcToPoint(Offset(r, h), radius: Radius.circular(r - h))
+                ..lineTo(size.width - r, h)
+                ..arcToPoint(Offset(size.width - h, r), radius: Radius.circular(r - h))
+                ..lineTo(size.width - h, size.height);
+              canvas.drawPath(path, p);
+            }
+
+            @override
+            bool shouldRepaint(covariant _ThreeSidePainter o) =>
+                o.color != color || o.width != width || o.radius != radius;
+          }
+
+          /// تنظیمات خط دور لیست اشخاص (سه‌طرفه: بالا، چپ، راست)
+          class FrameEditor extends StatelessWidget {
+            final String k;
+            const FrameEditor(this.k, {super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) {
+                  final s = uiStyles.of(k);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      secondary: const Icon(Icons.border_top),
+                      title: const Text('خط دور کادر اشخاص', style: TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: const Text('از زیر کادرهای وام‌ها و چک‌ها شروع می‌شود، دور اشخاص می‌چرخد و تا پایین صفحه ادامه دارد (بدون خط پایین)'),
+                      value: s.border,
+                      onChanged: (v) => uiStyles.change(k, (x) => x.border = v ?? false),
+                    ),
+                    if (s.border) ...[
+                      _sliderNum('ضخامت خط', s.bw, .5, 8, (v) => uiStyles.change(k, (x) => x.bw = v),
+                          icon: Icons.line_weight),
+                      _colorRow(c, 'رنگ خط', s.bc, (v) => uiStyles.change(k, (x) => x.bc = v),
+                          icon: Icons.border_color),
+                      _sliderRow('شفافیت خط', s.bo, .1, 1, (v) => uiStyles.change(k, (x) => x.bo = v),
+                          icon: Icons.opacity),
+                    ],
+                  ]);
+                },
+              );
+            }
+          }
+
           void showHomeStyleSheet(BuildContext c) {
             const keys = ['hero', 'loans', 'cheques', 'contacts'];
             const names = {
@@ -4259,9 +4377,10 @@ jobs:
                         title: Text(names[k]!, style: const TextStyle(fontWeight: FontWeight.bold)),
                         children: [
                           if (k != 'contacts') RectEditor(k),
+                          if (k == 'contacts') const FrameEditor('home_pframe'),
                           StyleEditor('home_$k',
                               glass: true,
-                              border: true,
+                              border: k != 'contacts',
                               size: k == 'contacts',
                               sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
                               sizeMin: .2,
@@ -4269,7 +4388,7 @@ jobs:
                           Align(
                             alignment: AlignmentDirectional.centerStart,
                             child: TextButton.icon(
-                              onPressed: () => uiStyles.reset(['home_$k']),
+                              onPressed: () => uiStyles.reset(k == 'contacts' ? ['home_contacts', 'home_pframe'] : ['home_$k']),
                               icon: const Icon(Icons.restart_alt),
                               label: const Text('بازگشت ظاهر به پیش‌فرض'),
                             ),
@@ -4848,6 +4967,130 @@ jobs:
                     : null,
               );
 
+          /// تب‌های دوتایی؛ در حالت شیشه‌ای خودِ دو تب (دقیقاً از خط دور آنها) شیشه‌ای می‌شوند
+          class StyledSegments extends StatelessWidget {
+            final String styleKey, selected;
+            final List<String> values, labels;
+            final ValueChanged<String> onChanged;
+            const StyledSegments(
+                {super.key,
+                required this.styleKey,
+                required this.values,
+                required this.labels,
+                required this.selected,
+                required this.onChanged});
+
+            @override
+            Widget build(BuildContext context) {
+              final s = uiStyles.of(styleKey);
+              if (!s.glass) {
+                return SegmentedButton<String>(
+                  segments: [
+                    for (var i = 0; i < values.length; i++) ButtonSegment(value: values[i], label: Text(labels[i])),
+                  ],
+                  selected: {selected},
+                  style: segStyle(context, s),
+                  onSelectionChanged: (v) => onChanged(v.first),
+                );
+              }
+              final th = Theme.of(context);
+              final pc = s.color != null ? Color(s.color!) : th.colorScheme.primary;
+              final line = s.border
+                  ? (s.bc != null ? Color(s.bc!) : th.colorScheme.primary).withValues(alpha: s.bo)
+                  : Colors.white.withValues(alpha: .55);
+              final lw = s.border ? s.bw : 1.2;
+              final tc = s.textColor != null ? Color(s.textColor!) : null;
+              final r = BorderRadius.circular(22);
+              return ClipRRect(
+                borderRadius: r,
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                  child: Container(
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: (s.color != null ? Color(s.color!) : Colors.white).withValues(alpha: .25),
+                      borderRadius: r,
+                      border: Border.all(color: line, width: lw),
+                    ),
+                    child: Row(children: [
+                      for (var i = 0; i < values.length; i++) ...[
+                        if (i > 0) SizedBox(width: 1, height: 44, child: ColoredBox(color: line)),
+                        Expanded(
+                          child: Material(
+                            color: values[i] == selected ? pc.withValues(alpha: .3) : Colors.transparent,
+                            child: InkWell(
+                              onTap: () => onChanged(values[i]),
+                              child: Center(
+                                child: Text(labels[i],
+                                    style: TextStyle(
+                                        color: tc,
+                                        fontWeight: values[i] == selected ? FontWeight.bold : FontWeight.normal)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ]),
+                  ),
+                ),
+              );
+            }
+          }
+
+          /// نرمال‌سازی متن برای جستجو (ارقام فارسی/عربی و ی و ک عربی)
+          String normQ(String s) {
+            const fa = '۰۱۲۳۴۵۶۷۸۹';
+            const ar = '٠١٢٣٤٥٦٧٨٩';
+            final b = StringBuffer();
+            for (final ch in s.toLowerCase().split('')) {
+              final i = fa.indexOf(ch);
+              final j = ar.indexOf(ch);
+              if (i >= 0) {
+                b.write(i);
+              } else if (j >= 0) {
+                b.write(j);
+              } else if (ch == 'ي') {
+                b.write('ی');
+              } else if (ch == 'ك') {
+                b.write('ک');
+              } else {
+                b.write(ch);
+              }
+            }
+            return b.toString();
+          }
+
+          /// کادر جستجوی داخل نوار بالای صفحه (از کنار چرخ‌دنده تا کنار اسم صفحه)
+          Widget appBarSearch(BuildContext c, String hint, ValueChanged<String> onChanged) {
+            final th = Theme.of(c);
+            final glass = th.scaffoldBackgroundColor == Colors.transparent;
+            final fill = glass
+                ? Colors.white.withValues(alpha: .35)
+                : th.colorScheme.surfaceContainerHighest.withValues(alpha: .7);
+            return SizedBox(
+              height: 38,
+              child: TextField(
+                onChanged: onChanged,
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(fontSize: 14),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: hint,
+                  hintStyle: const TextStyle(fontSize: 13),
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  filled: true,
+                  fillColor: fill,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20), borderSide: BorderSide(color: th.colorScheme.primary)),
+                ),
+              ),
+            );
+          }
+
           class StyledChip extends StatelessWidget {
             final String styleKey;
             final Widget label;
@@ -5215,32 +5458,92 @@ jobs:
             final String label;
             final bool selected;
             final VoidCallback onTap;
-            const ChipSpec(this.label, this.selected, this.onTap);
+            final Color? color;
+            const ChipSpec(this.label, this.selected, this.onTap, {this.color});
           }
 
-          Widget chipRow(String styleKey, List<ChipSpec> chips) => Row(children: [
-                for (final c in chips)
-                  Expanded(
-                    flex: c.label.length + 3,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: StyledChip(
-                        styleKey: styleKey,
-                        inBox: true,
-                        label: FittedBox(
-                            fit: BoxFit.scaleDown, child: Text(c.label, style: const TextStyle(fontSize: 12))),
-                        selected: c.selected,
-                        onSelected: (_) => c.onTap(),
+          /// ردیف گزینه‌های فیلتر داخل کادر مشترک.
+          /// joined=false: چند کادر مساوی با فاصلهٔ کم؛ joined=true: کادرهای چسبیده به هم؛
+          /// flush=true: کادرهای چسبیده، مساوی و دقیقاً از خط چپ تا خط راست کادر مشترک.
+          /// خط دور (ضخامت، رنگ، شفافیت) از تنظیمات «خط دور کادرها» روی این گزینه‌ها هم اعمال می‌شود.
+          Widget chipRow(String styleKey, List<ChipSpec> chips, {bool joined = false, bool flush = false}) =>
+              Builder(builder: (c) {
+                final s = uiStyles.of(styleKey);
+                final th = Theme.of(c);
+                final line = s.border
+                    ? (s.bc != null ? Color(s.bc!) : th.colorScheme.primary).withValues(alpha: s.bo)
+                    : th.colorScheme.outlineVariant;
+                final lw = s.border ? s.bw : 1.0;
+                final base = s.color != null ? Color(s.color!) : null;
+                final tc = s.textColor != null ? Color(s.textColor!) : null;
+                final fill = th.colorScheme.onSurface.withValues(alpha: .05);
+                Color selCol(ChipSpec ch) =>
+                    ch.color ?? (base != null ? base.withValues(alpha: .55) : th.colorScheme.primary.withValues(alpha: .25));
+                Widget cell(ChipSpec ch, BorderRadius r) => Material(
+                      color: ch.selected ? selCol(ch) : Colors.transparent,
+                      borderRadius: r,
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: ch.selected ? null : ch.onTap,
+                        child: Container(
+                          height: 40,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(ch.label,
+                                maxLines: 1,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: tc,
+                                    fontWeight: ch.selected ? FontWeight.bold : FontWeight.normal)),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-              ]);
+                    );
+                int flexOf(ChipSpec ch) => (joined && !flush) ? ch.label.length + 3 : 1;
+                if (!joined) {
+                  return Row(children: [
+                    for (var i = 0; i < chips.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 6),
+                      Expanded(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                              color: fill,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: line, width: lw)),
+                          child: cell(chips[i], BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ],
+                  ]);
+                }
+                final row = Row(children: [
+                  for (var i = 0; i < chips.length; i++) ...[
+                    if (i > 0) SizedBox(width: lw, height: 40, child: ColoredBox(color: line)),
+                    Expanded(flex: flexOf(chips[i]), child: cell(chips[i], BorderRadius.zero)),
+                  ],
+                ]);
+                if (flush) {
+                  return ClipRRect(
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+                    child: DecoratedBox(
+                        decoration: BoxDecoration(border: Border(top: BorderSide(color: line, width: lw))), child: row),
+                  );
+                }
+                return DecoratedBox(
+                  decoration:
+                      BoxDecoration(color: fill, borderRadius: BorderRadius.circular(12), border: Border.all(color: line, width: lw)),
+                  child: ClipRRect(borderRadius: BorderRadius.circular(10), child: row),
+                );
+              });
 
           /// کادر مشترک فیلترها (دو ردیف داخل یک کادر)
-          Widget filterBox(BuildContext c, String styleKey, List<Widget> rows) =>
+          Widget filterBox(BuildContext c, String styleKey, List<Widget> rows,
+                  {EdgeInsets pad = const EdgeInsets.symmetric(horizontal: 8, vertical: 10)}) =>
               styledBox(c, uiStyles.of(styleKey), Theme.of(c).colorScheme.surfaceContainerLow,
-                  Column(mainAxisSize: MainAxisSize.min, children: rows),
-                  radius: 18, pad: const EdgeInsets.symmetric(horizontal: 8, vertical: 10));
+                  Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: rows),
+                  radius: 18, pad: pad);
 
           // ---------- backup & export ----------
           Future<void> shareFile(String name, String content, String mime) async {
