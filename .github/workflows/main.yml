@@ -98,11 +98,6 @@ jobs:
                     b == Brightness.light ? const Color(0xFFF3F7F8) : null,
                 appBarTheme: const AppBarTheme(
                     scrolledUnderElevation: 0, backgroundColor: Colors.transparent),
-                // گذار سبک و روان بین صفحه‌ها
-                pageTransitionsTheme: PageTransitionsTheme(builders: {
-                  TargetPlatform.android: const CupertinoPageTransitionsBuilder(),
-                  TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
-                }),
               );
             }
 
