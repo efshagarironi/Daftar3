@@ -98,6 +98,11 @@ jobs:
                     b == Brightness.light ? const Color(0xFFF3F7F8) : null,
                 appBarTheme: const AppBarTheme(
                     scrolledUnderElevation: 0, backgroundColor: Colors.transparent),
+                // گذار سبک و روان بین صفحه‌ها
+                pageTransitionsTheme: const PageTransitionsTheme(builders: {
+                  TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+                  TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+                }),
               );
             }
 
@@ -1039,15 +1044,21 @@ jobs:
                   ]),
                 ),
                 floatingActionButton: i == 0
-                    ? FloatingActionButton.extended(
-                        backgroundColor: i == 0 ? const Color(0xFF4A90E8) : null,
-                        foregroundColor: i == 0 ? Colors.white : null,
-                        shape: i == 0 ? const StadiumBorder() : null,
-                        onPressed: () => openAccountForm(context),
-                        icon: const Icon(Icons.add_circle_outline),
-                        label: const Text('ثبت حساب'))
+                    ? ListenableBuilder(
+                        listenable: uiStyles,
+                        builder: (c, _) => FloatingActionButton.extended(
+                            backgroundColor: Color(uiStyles.bgOf('fab') ?? 0xFF4A90E8),
+                            foregroundColor: Colors.white,
+                            shape: const StadiumBorder(),
+                            onPressed: () => openAccountForm(context),
+                            icon: const Icon(Icons.add_circle_outline),
+                            label: const Text('ثبت حساب')))
                     : null,
-                bottomNavigationBar: NavigationBar(
+                bottomNavigationBar: ListenableBuilder(
+                  listenable: uiStyles,
+                  builder: (c, _) => NavigationBar(
+                  backgroundColor: uiStyles.bgOf('navbar') == null ? null : Color(uiStyles.bgOf('navbar')!),
+                  surfaceTintColor: Colors.transparent,
                   selectedIndex: i,
                   onDestinationSelected: (v) => setState(() => i = v),
                   destinations: const [
@@ -1055,7 +1066,7 @@ jobs:
                     NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
                     NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
                   ],
-                ),
+                )),
               ));
             }
           }
@@ -1652,12 +1663,34 @@ jobs:
             final bool person;
             const AccTile(this.a, {super.key, this.styleKey = 'acc_card', this.person = false});
 
+            // مانده کل طلب/بدهی شخص تا لحظهٔ ثبت همین حساب (مثبت = طلب)
+            int _runBal() {
+              final all = store.accs.where((x) => x.contactId == a.contactId);
+              String key(Acc x) => '${ymd(x.opened ?? DateTime(1970))}|${x.m['created_at'] ?? ''}';
+              final mine = key(a);
+              final c0 = a.opened ?? DateTime(1970);
+              final cut = DateTime(c0.year, c0.month, c0.day);
+              var t = 0;
+              for (final x in all) {
+                if (key(x).compareTo(mine) > 0) continue;
+                var rem = x.principal;
+                for (final tx in x.txs) {
+                  final d = DateTime.tryParse('${tx['transaction_date']}');
+                  if (d != null && !DateTime(d.year, d.month, d.day).isAfter(cut)) {
+                    rem -= (tx['amount'] as num).toInt();
+                  }
+                }
+                t += x.isRec ? rem : -rem;
+              }
+              return t;
+            }
+
             // کادر حساب در صفحهٔ حساب شخص
             Widget _personTile(BuildContext c) {
               final tt = Theme.of(c).textTheme;
               final hasPay = a.txs.isNotEmpty;
-              final total = netOf(a.contactId);
-              final dateLabel = a.isRec ? 'تاریخ دریافت' : 'تاریخ پرداخت';
+              final total = _runBal();
+              const dateLabel = 'تاریخ ثبت';
               Widget lbl(String t, Color col) =>
                   Text(t, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: col));
               Widget amt(String t) => Text(t, style: const TextStyle(fontWeight: FontWeight.bold));
@@ -1683,7 +1716,7 @@ jobs:
                         ],
                       ]),
                       const SizedBox(height: 6),
-                      Text(a.due == null ? '$dateLabel: —' : '$dateLabel: ${fmtDate(a.due!)}',
+                      Text(a.opened == null ? '$dateLabel: —' : '$dateLabel: ${fmtDate(a.opened!)}',
                           style: tt.bodySmall),
                     ]),
                   ),
@@ -1693,7 +1726,7 @@ jobs:
                     defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                     children: [
                       TableRow(children: [
-                        Padding(padding: const EdgeInsetsDirectional.only(end: 8, bottom: 6), child: amt(money(a.paid))),
+                        Padding(padding: const EdgeInsetsDirectional.only(end: 8, bottom: 6), child: amt(money(a.principal))),
                         Padding(
                             padding: const EdgeInsets.only(bottom: 6),
                             child: lbl(a.isRec ? 'دریافتی' : 'پرداختی', a.isRec ? cRec : cPay)),
@@ -4069,14 +4102,14 @@ jobs:
           }
 
           /// آیتم «پس‌زمینه» در برگهٔ تنظیمات هر صفحه
-          Widget bgTile(BuildContext c, String pageKey) => ListenableBuilder(
+          Widget bgTile(BuildContext c, String pageKey, {String title = 'پس‌زمینه'}) => ListenableBuilder(
                 listenable: uiStyles,
                 builder: (c2, _) {
                   final v = uiStyles.bgOf(pageKey);
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.format_color_fill),
-                    title: const Text('پس‌زمینه', style: TextStyle(fontWeight: FontWeight.bold)),
+                    title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(v == null ? 'پیش‌فرض' : 'رنگ سفارشی'),
                     trailing: Container(
                       width: 30,
@@ -4087,7 +4120,7 @@ jobs:
                         border: Border.all(color: Colors.grey, width: 1.2),
                       ),
                     ),
-                    onTap: () => showBgPicker(c, pageKey),
+                    onTap: () => showBgPicker(c, pageKey, title: title),
                   );
                 },
               );
@@ -4099,7 +4132,7 @@ jobs:
                 onPressed: () => showBgPicker(c, pageKey),
               );
 
-          void showBgPicker(BuildContext c, String pageKey) {
+          void showBgPicker(BuildContext c, String pageKey, {String title = 'پس‌زمینه'}) {
             showModalBottomSheet(
               context: c,
               isScrollControlled: true,
@@ -4109,7 +4142,7 @@ jobs:
                   constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * .92),
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                    child: _BgPickerBody(pageKey),
+                    child: _BgPickerBody(pageKey, title),
                   ),
                 ),
               ),
@@ -4171,8 +4204,8 @@ jobs:
           }
 
           class _BgPickerBody extends StatefulWidget {
-            final String pageKey;
-            const _BgPickerBody(this.pageKey);
+            final String pageKey, title;
+            const _BgPickerBody(this.pageKey, this.title);
             @override
             State<_BgPickerBody> createState() => _BgPickerBodyState();
           }
@@ -4244,7 +4277,7 @@ jobs:
             Widget build(BuildContext context) {
               final th = Theme.of(context);
               return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('پس‌زمینهٔ این صفحه',
+                Text(widget.title == 'پس‌زمینه' ? 'پس‌زمینهٔ این صفحه' : widget.title,
                     style: th.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 Directionality(
@@ -4384,17 +4417,8 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              if (!fade) return ClipRect(child: child);
-              return ShaderMask(
-                blendMode: BlendMode.dstIn,
-                shaderCallback: (r) => LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: const [Color(0x00000000), Color(0xFF000000)],
-                  stops: [0, (height / math.max(r.height, 1.0)).clamp(0.0, 1.0).toDouble()],
-                ).createShader(r),
-                child: child,
-              );
+              // برش ساده (سبک‌تر از ماسک شیشه‌ای) تا اسکرول روان بماند
+              return ClipRect(child: child);
             }
           }
 
@@ -4433,10 +4457,12 @@ jobs:
                       onRefresh: onRefresh,
                       child: FadeTop(
                         fade: fade,
-                        child: ListView(
+                        child: ListView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
+                          cacheExtent: 600,
                           padding: EdgeInsets.fromLTRB(16, kFadeH, 16, bottomPad),
-                          children: children,
+                          itemCount: children.length,
+                          itemBuilder: (_, i) => RepaintBoundary(child: children[i]),
                         ),
                       ),
                     ),
@@ -4827,6 +4853,8 @@ jobs:
                     ]),
                     const SizedBox(height: 8),
                     bgTile(ctx, 'home'),
+                    bgTile(ctx, 'navbar', title: 'رنگ نوار پایین'),
+                    bgTile(ctx, 'fab', title: 'رنگ کادر اضافه کردن اشخاص'),
                     const Divider(),
                     Row(children: [
                       Expanded(
