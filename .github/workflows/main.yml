@@ -99,9 +99,9 @@ jobs:
                 appBarTheme: const AppBarTheme(
                     scrolledUnderElevation: 0, backgroundColor: Colors.transparent),
                 // گذار سبک و روان بین صفحه‌ها
-                pageTransitionsTheme: const PageTransitionsTheme(builders: {
-                  TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-                  TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+                pageTransitionsTheme: PageTransitionsTheme(builders: {
+                  TargetPlatform.android: const CupertinoPageTransitionsBuilder(),
+                  TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
                 }),
               );
             }
