@@ -343,11 +343,21 @@ jobs:
 
           // ---------- formatting ----------
           String faDigits(String s) {
-            var o = s;
-            for (var i = 0; i < 10; i++) {
-              o = o.replaceAll('$i', String.fromCharCode(0x06F0 + i));
+            // یک گذر روی رشته (به‌جای ۱۰ بار replaceAll) تا ساخت ردیف‌ها سریع باشد
+            final u = s.codeUnits;
+            var has = false;
+            for (final c in u) {
+              if (c >= 0x30 && c <= 0x39) {
+                has = true;
+                break;
+              }
             }
-            return o;
+            if (!has) return s;
+            final b = StringBuffer();
+            for (final c in u) {
+              b.writeCharCode(c >= 0x30 && c <= 0x39 ? c - 0x30 + 0x06F0 : c);
+            }
+            return b.toString();
           }
 
           int? parseAmount(String s) {
@@ -361,9 +371,15 @@ jobs:
             return int.tryParse(t);
           }
 
-          String group(int v) => v
-              .toString()
-              .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => '٬');
+          String group(int v) {
+            final t = v.abs().toString();
+            final b = StringBuffer(v < 0 ? '-' : '');
+            for (var i = 0; i < t.length; i++) {
+              if (i > 0 && (t.length - i) % 3 == 0) b.write('٬');
+              b.write(t[i]);
+            }
+            return b.toString();
+          }
           String money(int v) => '${faDigits(group(v))} ${unit.value}';
           String _p2(int n) => n.toString().padLeft(2, '0');
           String ymd(DateTime d) => '${d.year}-${_p2(d.month)}-${_p2(d.day)}';
@@ -478,12 +494,25 @@ jobs:
             List<Cheque> get cheques => _chqC ??= rawCheques.map(Cheque.new).toList();
             int get pending => _q.length;
 
+            bool _keepCache = false;
             @override
             void notifyListeners() {
-              _accC = null;
-              _loanC = null;
-              _chqC = null;
+              if (!_keepCache) {
+                _accC = null;
+                _loanC = null;
+                _chqC = null;
+              }
               super.notifyListeners();
+            }
+
+            /// اعلان بدون تغییر داده (مثلاً فقط وضعیت «در حال بارگذاری») تا مدل‌ها دوباره ساخته نشوند
+            void _ping() {
+              _keepCache = true;
+              try {
+                notifyListeners();
+              } finally {
+                _keepCache = false;
+              }
             }
 
             void refreshUI() => notifyListeners();
@@ -761,7 +790,7 @@ jobs:
 
             Future<void> load() async {
               loading = true;
-              notifyListeners();
+              _ping();
               await _ensureQ();
               if (!_loaded) {
                 // اول داده‌های ذخیره‌شده روی گوشی را نشان بده تا بدون اینترنت هم صفحه خالی نماند
@@ -3856,12 +3885,19 @@ jobs:
                       final given = loans.where((l) => !l.taken).fold<int>(0, (s, l) => s + l.remaining);
                       final shown = loans.where(_match).toList();
                       final rows = <MapEntry<Loan, Map<String, dynamic>>>[];
-                      for (final l in shown) {
-                        for (final i in l.inst) {
-                          if (!Loan.isPaid(i)) rows.add(MapEntry(l, i));
+                      if (tab != 'loans') {
+                        for (final l in shown) {
+                          for (final i in l.inst) {
+                            if (!Loan.isPaid(i)) rows.add(MapEntry(l, i));
+                          }
                         }
+                        rows.sort((a, b) => '${a.value['due_at']}'.compareTo('${b.value['due_at']}'));
                       }
-                      rows.sort((a, b) => '${a.value['due_at']}'.compareTo('${b.value['due_at']}'));
+                      final isLoans = tab == 'loans';
+                      final emptyMsg = isLoans
+                          ? (shown.isEmpty ? (loans.isEmpty ? 'هنوز وامی ثبت نشده است' : 'موردی یافت نشد') : null)
+                          : (rows.isEmpty ? 'قسط پرداخت‌نشده‌ای ندارید ✨' : null);
+                      final n = isLoans ? shown.length : rows.length;
                       return FixedHeaderList(
                           onRefresh: store.load,
                           lockHeader: layoutEditing.value,
@@ -3883,15 +3919,14 @@ jobs:
                                     )),
                               ],
                             ]),
-                          children: [
-                            if (tab == 'loans') ...[
-                              if (shown.isEmpty) emptyBox(loans.isEmpty ? 'هنوز وامی ثبت نشده است' : 'موردی یافت نشد'),
-                              ...shown.map((l) => _loanTile(c, l)),
-                            ] else ...[
-                              if (rows.isEmpty) emptyBox('قسط پرداخت‌نشده‌ای ندارید ✨'),
-                              ...rows.map((e) => _instTile(c, e.key, e.value)),
-                            ],
-                          ],
+                          // ساخت تنبل: فقط ردیف‌های قابل‌مشاهده ساخته می‌شوند
+                          itemCount: emptyMsg != null ? 1 : n,
+                          itemBuilder: (cx, idx) {
+                            if (emptyMsg != null) return emptyBox(emptyMsg);
+                            if (isLoans) return _loanTile(cx, shown[idx]);
+                            final e = rows[idx];
+                            return _instTile(cx, e.key, e.value);
+                          },
                       );
                     },
                   ),
@@ -5068,6 +5103,7 @@ jobs:
               EdgeInsets pad = const EdgeInsets.all(16),
               double? height,
               List<Color>? colors,
+              bool blur = true,
               bool center = false}) {
             final col = s.color != null ? Color(s.color!) : base;
             final a = s.glass ? s.opacity * .55 : s.opacity;
@@ -5109,7 +5145,7 @@ jobs:
                 ),
               ),
             );
-            if (s.glass) {
+            if (s.glass && blur) {
               box = ClipRRect(
                   borderRadius: r,
                   child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14), child: box));
@@ -5124,8 +5160,10 @@ jobs:
             final vp = math.max(2.0, vpad * s.size);
             return Padding(
               padding: EdgeInsets.only(bottom: gap),
+              // بدون BackdropFilter: پشت کارت‌ها فقط گرادیان ملایم است و محو کردن ظاهر را عوض نمی‌کند،
+              // ولی برای هر ردیف لیست لگ سنگین می‌سازد
               child: styledBox(c, s, Theme.of(c).colorScheme.surfaceContainerLow, child,
-                  onTap: onTap, pad: EdgeInsets.symmetric(horizontal: 16, vertical: vp)),
+                  onTap: onTap, blur: false, pad: EdgeInsets.symmetric(horizontal: 16, vertical: vp)),
             );
           }
 
@@ -5234,11 +5272,16 @@ jobs:
           class FastRoute<T> extends PageRouteBuilder<T> {
             FastRoute({required WidgetBuilder builder})
                 : super(
+                    // opaque: صفحهٔ زیرین بعد از گذار دیگر رسم نمی‌شود (سبک‌تر)
+                    opaque: true,
                     pageBuilder: (c, a, s) => builder(c),
-                    transitionDuration: const Duration(milliseconds: 160),
-                    reverseTransitionDuration: const Duration(milliseconds: 130),
-                    transitionsBuilder: (c, a, s, child) => FadeTransition(
-                      opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
+                    transitionDuration: const Duration(milliseconds: 150),
+                    reverseTransitionDuration: const Duration(milliseconds: 120),
+                    // جابه‌جایی کوچک به‌جای محو شدن؛ محو شدن کل صفحه لایهٔ ذخیره‌ی سنگین می‌سازد
+                    transitionsBuilder: (c, a, s, child) => SlideTransition(
+                      position: Tween<Offset>(begin: const Offset(0, .04), end: Offset.zero)
+                          .chain(CurveTween(curve: Curves.easeOutCubic))
+                          .animate(a),
                       child: child,
                     ),
                   );
@@ -7493,7 +7536,8 @@ jobs:
               customLock.addListener(_rebuild);
               if (_active) {
                 locked = true;
-                if (customLock.value == 'none') {
+                // اثر انگشت پیش‌فرض است؛ اگر لغو شود، صفحهٔ رمز/الگو زیر آن آماده است
+                if (customLock.value == 'none' || appLockEnabled.value) {
                   WidgetsBinding.instance.addPostFrameCallback((_) => _unlock());
                 }
               }
@@ -7524,7 +7568,7 @@ jobs:
                 if (!locked && t != null && DateTime.now().difference(t).inSeconds >= lockDelay.value) {
                   setState(() => locked = true);
                 }
-                if (locked && customLock.value == 'none') _unlock();
+                if (locked && (customLock.value == 'none' || appLockEnabled.value)) _unlock();
               }
             }
 
