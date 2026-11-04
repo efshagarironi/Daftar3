@@ -57,6 +57,8 @@ jobs:
             share_plus: ^10.1.4
             crypto: ^3.0.5
             local_auth: ^2.3.0
+            flutter_local_notifications: ^19.0.0
+            timezone: ^0.10.0
           dev_dependencies:
             flutter_test:
               sdk: flutter
@@ -69,6 +71,7 @@ jobs:
           import 'package:flutter_localizations/flutter_localizations.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:supabase_flutter/supabase_flutter.dart';
+          import 'alerts.dart';
           import 'data.dart';
           import 'screens.dart';
 
@@ -79,8 +82,12 @@ jobs:
             await loadLockPref();
             await loadCustomLock();
             await uiStyles.load();
+            await alertPrefs.load();
+            await loadCachedUid();
             if (kConfigured) {
-              await Supabase.initialize(url: kUrl, anonKey: kKey);
+              try {
+                await Supabase.initialize(url: kUrl, anonKey: kKey);
+              } catch (_) {}
             }
             runApp(const HesabYarApp());
           }
@@ -106,6 +113,7 @@ jobs:
               return MaterialApp(
                 title: 'حساب‌یار',
                 debugShowCheckedModeBanner: false,
+                navigatorKey: navKey,
                 locale: const Locale('fa'),
                 supportedLocales: const [Locale('fa')],
                 localizationsDelegates: const [
@@ -131,16 +139,20 @@ jobs:
               return StreamBuilder<AuthState>(
                 stream: sb.auth.onAuthStateChange,
                 builder: (context, snap) {
-                  final s = sb.auth.currentSession;
-                  if (s == null) return const AuthPage();
-                  return Home(key: ValueKey(s.user.id));
+                  final s = safeSession();
+                  if (s != null) rememberUid();
+                  // بدون اینترنت هم اگر قبلاً وارد شده‌اید، برنامه با داده‌های ذخیره‌شده باز می‌شود
+                  if (s == null && cachedUid == null) return const AuthPage();
+                  return Home(key: ValueKey(s?.user.id ?? cachedUid));
                 },
               );
             }
           }
           MAIN_EOF
           cat > lib/data.dart <<'DATA_EOF'
+          import 'dart:async';
           import 'dart:convert';
+          import 'dart:math' as math;
           import 'dart:typed_data';
           import 'package:crypto/crypto.dart';
           import 'package:flutter/foundation.dart';
@@ -153,7 +165,13 @@ jobs:
           const kKey = String.fromEnvironment('SUPABASE_ANON_KEY');
           bool get kConfigured => kUrl.isNotEmpty && kKey.isNotEmpty;
           SupabaseClient get sb => Supabase.instance.client;
-          String uid() => sb.auth.currentUser!.id;
+          String uid() {
+            try {
+              final id = sb.auth.currentUser?.id;
+              if (id != null) return id;
+            } catch (_) {}
+            return cachedUid ?? '';
+          }
 
           final unit = ValueNotifier<String>('تومان');
           String profileName = '';
@@ -362,7 +380,69 @@ jobs:
                 (m['opened_at'] ?? m['created_at'] ?? '') as String);
           }
 
-          // ---------- store (online-first, read-only offline cache) ----------
+          // ---------- store (آفلاین‌محور: ثبت و مشاهدهٔ آفلاین + همگام‌سازی خودکار با سرور) ----------
+          String newId() {
+            final r = math.Random.secure();
+            final b = List<int>.generate(16, (_) => r.nextInt(256));
+            b[6] = (b[6] & 0x0f) | 0x40;
+            b[8] = (b[8] & 0x3f) | 0x80;
+            String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
+            return '${h(0)}${h(1)}${h(2)}${h(3)}-${h(4)}${h(5)}-${h(6)}${h(7)}-${h(8)}${h(9)}-'
+                '${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}';
+          }
+
+          /// پرس‌وجوی نوشتنی که مثل Future قابل await است (insert / update / delete)
+          class OQuery implements Future<dynamic> {
+            final String t, op;
+            final dynamic data;
+            final List<List<dynamic>> filters = [];
+            bool _sel = false;
+            Future<dynamic>? _fut;
+            OQuery(this.t, this.op, this.data);
+
+            OQuery eq(String c, Object v) {
+              filters.add([c, v]);
+              return this;
+            }
+
+            OQuery select([String cols = '*']) {
+              _sel = true;
+              return this;
+            }
+
+            OQuery single() => this;
+
+            Future<dynamic> get _x => _fut ??= store.mutate(t, op, data, filters, _sel);
+
+            @override
+            Future<R> then<R>(FutureOr<R> Function(dynamic value) onValue, {Function? onError}) =>
+                _x.then<R>(onValue, onError: onError);
+            @override
+            Future<dynamic> catchError(Function onError, {bool Function(Object error)? test}) =>
+                _x.catchError(onError, test: test);
+            @override
+            Future<dynamic> whenComplete(FutureOr<void> Function() action) => _x.whenComplete(action);
+            @override
+            Stream<dynamic> asStream() => _x.asStream();
+            @override
+            Future<dynamic> timeout(Duration timeLimit, {FutureOr<dynamic> Function()? onTimeout}) =>
+                _x.timeout(timeLimit, onTimeout: onTimeout);
+          }
+
+          class OTable {
+            final String t;
+            OTable(this.t);
+            OQuery insert(dynamic data) => OQuery(t, 'insert', data);
+            OQuery update(Map<String, dynamic> data) => OQuery(t, 'update', data);
+            OQuery delete() => OQuery(t, 'delete', null);
+          }
+
+          class OfflineDb {
+            OTable from(String t) => OTable(t);
+          }
+
+          final db = OfflineDb();
+
           class Store extends ChangeNotifier {
             List<Map<String, dynamic>> rawAccs = [];
             List<Map<String, dynamic>> contacts = [];
@@ -370,61 +450,352 @@ jobs:
             List<Map<String, dynamic>> rawCheques = [];
             bool loading = false;
             bool offline = false;
+            bool _loaded = false;
+            bool _flushing = false;
+            bool _qReady = false;
+            final List<Map<String, dynamic>> _q = [];
             List<Acc> get accs => rawAccs.map(Acc.new).toList();
             List<Loan> get loans => rawLoans.map(Loan.new).toList();
             List<Cheque> get cheques => rawCheques.map(Cheque.new).toList();
+            int get pending => _q.length;
 
             void refreshUI() => notifyListeners();
+
+            String get _cacheKey => 'cache_${uid()}';
+            String get _qKey => 'pending_${uid()}';
+
+            Future<void> _saveCache() async {
+              try {
+                final p = await SharedPreferences.getInstance();
+                await p.setString(
+                    _cacheKey,
+                    jsonEncode({
+                      'c': contacts,
+                      'a': rawAccs,
+                      'l': rawLoans,
+                      'h': rawCheques,
+                      'u': unit.value,
+                      'pn': profileName,
+                    }));
+              } catch (_) {}
+            }
+
+            Future<void> _saveQ() async {
+              try {
+                final p = await SharedPreferences.getInstance();
+                await p.setString(_qKey, jsonEncode(_q));
+              } catch (_) {}
+            }
+
+            Future<void> _ensureQ() async {
+              if (_qReady) return;
+              try {
+                final p = await SharedPreferences.getInstance();
+                final s = p.getString(_qKey);
+                if (s != null) {
+                  for (final e in jsonDecode(s) as List) {
+                    _q.add(Map<String, dynamic>.from(e as Map));
+                  }
+                }
+              } catch (_) {}
+              unit.addListener(() {
+                _saveCache();
+              });
+              _qReady = true;
+            }
+
+            Future<void> _readCache() async {
+              try {
+                final p = await SharedPreferences.getInstance();
+                final s = p.getString(_cacheKey);
+                if (s == null) return;
+                final j = jsonDecode(s);
+                contacts = List<Map<String, dynamic>>.from(j['c']);
+                rawAccs = List<Map<String, dynamic>>.from(j['a']);
+                rawLoans = List<Map<String, dynamic>>.from(j['l'] ?? []);
+                rawCheques = List<Map<String, dynamic>>.from(j['h'] ?? []);
+                if (j['u'] != null) unit.value = '${j['u']}';
+                if (j['pn'] != null) profileName = '${j['pn']}';
+                _loaded = true;
+              } catch (_) {}
+            }
+
+            // ----- اعمال تغییر روی داده‌های محلی (بلافاصله، حتی بدون اینترنت) -----
+            String _nameOf(dynamic cid) {
+              for (final c in contacts) {
+                if ('${c['id']}' == '$cid') return '${c['name']}';
+              }
+              return '';
+            }
+
+            void _applyLocal(String t, String op, dynamic data, List<List<dynamic>> f) {
+              bool match(Map r) => f.every((x) => '${r[x[0]]}' == '${x[1]}');
+              final now = DateTime.now().toUtc().toIso8601String();
+              final rows = data is List ? data : (data == null ? [] : [data]);
+              switch (t) {
+                case 'contacts':
+                  if (op == 'insert') {
+                    for (final r in rows) {
+                      contacts.add({...Map<String, dynamic>.from(r as Map), 'created_at': now, 'archived_at': null});
+                    }
+                    contacts.sort((a, b) => '${a['name']}'.compareTo('${b['name']}'));
+                  } else if (op == 'update') {
+                    for (final c in contacts.where(match)) {
+                      c.addAll(Map<String, dynamic>.from(data as Map));
+                      for (final a in rawAccs.where((a) => '${a['contact_id']}' == '${c['id']}')) {
+                        a['contacts'] = {'name': c['name']};
+                      }
+                      for (final a in rawCheques.where((a) => '${a['contact_id']}' == '${c['id']}')) {
+                        a['contacts'] = {'name': c['name']};
+                      }
+                    }
+                  } else if (op == 'delete') {
+                    final ids = contacts.where(match).map((c) => '${c['id']}').toSet();
+                    contacts.removeWhere(match);
+                    rawAccs.removeWhere((a) => ids.contains('${a['contact_id']}'));
+                  }
+                  break;
+                case 'accounts':
+                  if (op == 'insert') {
+                    for (final r in rows.reversed) {
+                      final m = Map<String, dynamic>.from(r as Map);
+                      rawAccs.insert(0, {
+                        ...m,
+                        'created_at': now,
+                        'contacts': {'name': _nameOf(m['contact_id'])},
+                        'transactions': <dynamic>[],
+                      });
+                    }
+                  } else if (op == 'update') {
+                    for (final a in rawAccs.where(match)) {
+                      a.addAll(Map<String, dynamic>.from(data as Map));
+                      if ((data as Map).containsKey('contact_id')) {
+                        a['contacts'] = {'name': _nameOf(a['contact_id'])};
+                      }
+                    }
+                  } else if (op == 'delete') {
+                    rawAccs.removeWhere(match);
+                  }
+                  break;
+                case 'transactions':
+                  if (op == 'insert') {
+                    for (final r in rows) {
+                      final m = Map<String, dynamic>.from(r as Map);
+                      for (final a in rawAccs.where((a) => '${a['id']}' == '${m['account_id']}')) {
+                        a['transactions'] = [
+                          ...((a['transactions'] as List?) ?? []),
+                          {
+                            'id': m['id'],
+                            'amount': m['amount'],
+                            'transaction_date': m['transaction_date'],
+                            'note': m['note'],
+                          }
+                        ];
+                      }
+                    }
+                  } else if (op == 'update') {
+                    for (final a in rawAccs) {
+                      for (final tx in ((a['transactions'] as List?) ?? [])) {
+                        if (match(tx as Map)) tx.addAll(Map<String, dynamic>.from(data as Map));
+                      }
+                    }
+                  } else if (op == 'delete') {
+                    for (final a in rawAccs) {
+                      a['transactions'] = ((a['transactions'] as List?) ?? []).where((tx) => !match(tx as Map)).toList();
+                    }
+                  }
+                  break;
+                case 'loans':
+                  if (op == 'insert') {
+                    for (final r in rows.reversed) {
+                      rawLoans.insert(0, {
+                        ...Map<String, dynamic>.from(r as Map),
+                        'created_at': now,
+                        'loan_installments': <dynamic>[],
+                      });
+                    }
+                  } else if (op == 'update') {
+                    for (final l in rawLoans.where(match)) {
+                      l.addAll(Map<String, dynamic>.from(data as Map));
+                    }
+                  } else if (op == 'delete') {
+                    rawLoans.removeWhere(match);
+                  }
+                  break;
+                case 'loan_installments':
+                  if (op == 'insert') {
+                    for (final r in rows) {
+                      final m = Map<String, dynamic>.from(r as Map);
+                      for (final l in rawLoans.where((l) => '${l['id']}' == '${m['loan_id']}')) {
+                        l['loan_installments'] = [...((l['loan_installments'] as List?) ?? []), m];
+                      }
+                    }
+                  } else if (op == 'update') {
+                    for (final l in rawLoans) {
+                      for (final i in ((l['loan_installments'] as List?) ?? [])) {
+                        if (match(i as Map)) i.addAll(Map<String, dynamic>.from(data as Map));
+                      }
+                    }
+                  }
+                  break;
+                case 'cheques':
+                  if (op == 'insert') {
+                    for (final r in rows.reversed) {
+                      final m = Map<String, dynamic>.from(r as Map);
+                      rawCheques.insert(0, {
+                        ...m,
+                        'created_at': now,
+                        'contacts': m['contact_id'] == null ? null : {'name': _nameOf(m['contact_id'])},
+                      });
+                    }
+                  } else if (op == 'update') {
+                    for (final x in rawCheques.where(match)) {
+                      x.addAll(Map<String, dynamic>.from(data as Map));
+                      if ((data as Map).containsKey('contact_id')) {
+                        x['contacts'] = x['contact_id'] == null ? null : {'name': _nameOf(x['contact_id'])};
+                      }
+                    }
+                  } else if (op == 'delete') {
+                    rawCheques.removeWhere(match);
+                  }
+                  break;
+              }
+            }
+
+            /// ثبت تغییر: اول محلی، بعد در صف همگام‌سازی با سرور
+            Future<dynamic> mutate(String t, String op, dynamic data, List<List<dynamic>> f, bool sel) async {
+              await _ensureQ();
+              dynamic d = data;
+              String? firstId;
+              if (op == 'insert') {
+                final rows = data is List ? data : [data];
+                d = rows.map((r) {
+                  final m = Map<String, dynamic>.from(r as Map);
+                  m['id'] ??= newId();
+                  return m;
+                }).toList();
+                firstId = (d as List).isEmpty ? null : '${d.first['id']}';
+              } else if (op == 'update') {
+                d = Map<String, dynamic>.from(data as Map);
+              }
+              final ff = f.map((x) => [x[0], '${x[1]}']).toList();
+              _applyLocal(t, op, d, ff);
+              _q.add({'t': t, 'o': op, 'd': d, 'f': ff});
+              await _saveCache();
+              await _saveQ();
+              notifyListeners();
+              await flush();
+              return sel && firstId != null ? {'id': firstId} : null;
+            }
+
+            Future<void> _send(Map<String, dynamic> op) async {
+              final tb = sb.from('${op['t']}');
+              final o = '${op['o']}';
+              if (o == 'insert') {
+                await tb.insert(op['d']);
+                return;
+              }
+              dynamic q = o == 'update' ? tb.update(Map<String, dynamic>.from(op['d'] as Map)) : tb.delete();
+              for (final x in (op['f'] as List)) {
+                q = q.eq('${x[0]}', x[1]);
+              }
+              await q;
+            }
+
+            /// ارسال صف تغییرات به سرور؛ اگر اینترنت نباشد در صف می‌ماند
+            Future<void> flush() async {
+              await _ensureQ();
+              if (_flushing) return;
+              _flushing = true;
+              Object? fatal;
+              try {
+                while (_q.isNotEmpty) {
+                  final op = _q.first;
+                  try {
+                    await _send(op).timeout(const Duration(seconds: 12));
+                    _q.removeAt(0);
+                    await _saveQ();
+                  } on PostgrestException catch (e) {
+                    _q.removeAt(0);
+                    await _saveQ();
+                    fatal ??= e;
+                  } catch (_) {
+                    offline = true;
+                    break;
+                  }
+                }
+              } finally {
+                _flushing = false;
+              }
+              if (_q.isEmpty && fatal == null) offline = false;
+              notifyListeners();
+              if (fatal != null) throw fatal;
+            }
 
             Future<void> load() async {
               loading = true;
               notifyListeners();
-              final p = await SharedPreferences.getInstance();
-              final key = 'cache_${uid()}';
+              await _ensureQ();
+              if (!_loaded) {
+                // اول داده‌های ذخیره‌شده روی گوشی را نشان بده تا بدون اینترنت هم صفحه خالی نماند
+                await _readCache();
+                notifyListeners();
+              }
+              try {
+                await flush();
+              } catch (_) {}
+              if (_q.isNotEmpty) {
+                // هنوز تغییرات ارسال‌نشده داریم؛ داده‌های محلی را نگه می‌داریم
+                offline = true;
+                if (!_loaded) await _readCache();
+                loading = false;
+                notifyListeners();
+                return;
+              }
               try {
                 final c = await sb
                     .from('contacts')
                     .select()
                     .isFilter('archived_at', null)
-                    .order('name');
+                    .order('name')
+                    .timeout(const Duration(seconds: 10));
                 final a = await sb
                     .from('accounts')
                     .select('*, contacts(name), transactions(id,amount,transaction_date,note)')
-                    .order('created_at', ascending: false);
-                contacts = List<Map<String, dynamic>>.from(c);
-                rawAccs = List<Map<String, dynamic>>.from(a);
+                    .order('created_at', ascending: false)
+                    .timeout(const Duration(seconds: 10));
+                final nc = List<Map<String, dynamic>>.from(c);
+                final na = List<Map<String, dynamic>>.from(a);
                 // وام و چک: اگر جدول‌ها هنوز در Supabase ساخته نشده باشند، بقیهٔ برنامه عادی کار می‌کند
+                var nl = <Map<String, dynamic>>[];
+                var nh = <Map<String, dynamic>>[];
                 try {
                   final l = await sb
                       .from('loans')
                       .select('*, loan_installments(*)')
                       .order('created_at', ascending: false);
-                  rawLoans = List<Map<String, dynamic>>.from(l);
-                } catch (_) {
-                  rawLoans = [];
-                }
+                  nl = List<Map<String, dynamic>>.from(l);
+                } catch (_) {}
                 try {
                   final h = await sb
                       .from('cheques')
                       .select('*, contacts(name)')
                       .order('created_at', ascending: false);
-                  rawCheques = List<Map<String, dynamic>>.from(h);
-                } catch (_) {
-                  rawCheques = [];
+                  nh = List<Map<String, dynamic>>.from(h);
+                } catch (_) {}
+                // اگر در حین دریافت، تغییر تازه‌ای ثبت شده، نتیجهٔ قدیمی را اعمال نکن
+                if (_q.isEmpty) {
+                  contacts = nc;
+                  rawAccs = na;
+                  rawLoans = nl;
+                  rawCheques = nh;
+                  offline = false;
+                  _loaded = true;
+                  await _saveCache();
                 }
-                offline = false;
-                await p.setString(
-                    key, jsonEncode({'c': contacts, 'a': rawAccs, 'l': rawLoans, 'h': rawCheques}));
               } catch (e) {
                 offline = true;
-                final s = p.getString(key);
-                if (s != null) {
-                  final j = jsonDecode(s);
-                  contacts = List<Map<String, dynamic>>.from(j['c']);
-                  rawAccs = List<Map<String, dynamic>>.from(j['a']);
-                  rawLoans = List<Map<String, dynamic>>.from(j['l'] ?? []);
-                  rawCheques = List<Map<String, dynamic>>.from(j['h'] ?? []);
-                }
+                if (!_loaded) await _readCache();
               }
               loading = false;
               notifyListeners();
@@ -435,8 +806,11 @@ jobs:
               rawLoans = [];
               rawCheques = [];
               contacts = [];
+              _q.clear();
+              _loaded = false;
+              _qReady = false;
               final p = await SharedPreferences.getInstance();
-              for (final k in p.getKeys().where((k) => k.startsWith('cache_')).toList()) {
+              for (final k in p.getKeys().where((k) => k.startsWith('cache_') || k.startsWith('pending_')).toList()) {
                 await p.remove(k);
               }
               notifyListeners();
@@ -444,6 +818,46 @@ jobs:
           }
 
           final store = Store();
+
+          // شناسهٔ آخرین کاربر وارد‌شده (برای کار آفلاین وقتی نشست آنلاین در دسترس نیست)
+          String? cachedUid;
+
+          Future<void> loadCachedUid() async {
+            try {
+              final p = await SharedPreferences.getInstance();
+              cachedUid = p.getString('last_uid');
+            } catch (_) {}
+          }
+
+          void rememberUid() {
+            try {
+              final id = sb.auth.currentUser?.id;
+              if (id != null && id != cachedUid) {
+                cachedUid = id;
+                SharedPreferences.getInstance().then((p) => p.setString('last_uid', id));
+              }
+            } catch (_) {}
+          }
+
+          Future<void> doSignOut() async {
+            cachedUid = null;
+            try {
+              final p = await SharedPreferences.getInstance();
+              await p.remove('last_uid');
+            } catch (_) {}
+            try {
+              await sb.auth.signOut();
+            } catch (_) {}
+          }
+
+          Session? safeSession() {
+            try {
+              return sb.auth.currentSession;
+            } catch (_) {
+              return null;
+            }
+          }
+
 
           Future<void> loadProfile() async {
             try {
@@ -562,6 +976,689 @@ jobs:
             } catch (_) {}
           }
           DATA_EOF
+          cat > lib/alerts.dart <<'ALERTS_EOF'
+          import 'dart:convert';
+          import 'dart:async';
+          import 'package:flutter/material.dart';
+          import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:timezone/data/latest.dart' as tzdata;
+          import 'package:timezone/timezone.dart' as tz;
+          import 'data.dart';
+          import 'screens.dart';
+
+          final navKey = GlobalKey<NavigatorState>();
+
+          const soundNames = [
+            'صدای پیش‌فرض گوشی',
+            'زنگ ۱ (دینگ)',
+            'زنگ ۲ (ملودی)',
+            'زنگ ۳ (بیپ هشدار)',
+            'زنگ ۴ (آرام)',
+          ];
+
+          // ---------- تنظیمات هشدار سررسید ----------
+          class AlertPrefs extends ChangeNotifier {
+            bool loan = false, cheque = false, acc = false;
+            int lead = 0; // چند روز قبل از سررسید هشدار بدهد
+            int sound = 1; // 0 = صدای پیش‌فرض گوشی
+            int snoozeMin = 60; // تعویق پیش‌فرض دکمهٔ اعلان
+            Map<String, int> snz = {};
+
+            Future<void> load() async {
+              try {
+                final p = await SharedPreferences.getInstance();
+                loan = p.getBool('al_loan') ?? false;
+                cheque = p.getBool('al_cheque') ?? false;
+                acc = p.getBool('al_acc') ?? false;
+                lead = p.getInt('al_lead') ?? 0;
+                sound = (p.getInt('al_sound') ?? 1).clamp(0, 4).toInt();
+                snoozeMin = p.getInt('al_snooze') ?? 60;
+                final s = p.getString('al_snz');
+                if (s != null) {
+                  final m = jsonDecode(s) as Map;
+                  snz = m.map((k, v) => MapEntry('$k', (v as num).toInt()));
+                }
+              } catch (_) {}
+            }
+
+            Future<void> save() async {
+              notifyListeners();
+              try {
+                final p = await SharedPreferences.getInstance();
+                await p.setBool('al_loan', loan);
+                await p.setBool('al_cheque', cheque);
+                await p.setBool('al_acc', acc);
+                await p.setInt('al_lead', lead);
+                await p.setInt('al_sound', sound);
+                await p.setInt('al_snooze', snoozeMin);
+                await p.setString('al_snz', jsonEncode(snz));
+              } catch (_) {}
+            }
+          }
+
+          final alertPrefs = AlertPrefs();
+
+          // ---------- مدل یک سررسید ----------
+          class DueAction {
+            final String label;
+            final Color color;
+            final Future<void> Function() run;
+            const DueAction(this.label, this.color, this.run);
+          }
+
+          class DueItem {
+            final String key, kind, title;
+            final IconData icon;
+            final Color color;
+            final DateTime due;
+            final List<List<String>> details;
+            final List<DueAction> actions;
+            const DueItem(this.key, this.kind, this.title, this.icon, this.color, this.due, this.details, this.actions);
+
+            int get nid => key.hashCode & 0x7fffffff;
+
+            int get daysLeft {
+              final n = DateTime.now();
+              final t = DateTime(n.year, n.month, n.day);
+              return DateTime(due.year, due.month, due.day).difference(t).inDays;
+            }
+
+            String get statusText {
+              final d = daysLeft;
+              if (d < 0) return 'معوق: ${faDigits('${-d}')} روز از سررسید گذشته';
+              if (d == 0) return 'سررسید امروز است';
+              return '${faDigits('$d')} روز تا سررسید';
+            }
+
+            String get body => '${details.map((e) => '${e[0]}: ${e[1]}').join('\n')}\n$statusText';
+          }
+
+          String durLabel(int m) {
+            if (m % 1440 == 0) return '${faDigits('${m ~/ 1440}')} روز';
+            if (m % 60 == 0) return '${faDigits('${m ~/ 60}')} ساعت';
+            return '${faDigits('$m')} دقیقه';
+          }
+
+          Future<void> _afterAction() async {
+            try {
+              await store.load();
+            } catch (_) {}
+          }
+
+          List<DueItem> collectAllDue() {
+            final out = <DueItem>[];
+            final now = DateTime.now();
+            String ymdNow() => ymd(now);
+
+            if (alertPrefs.loan) {
+              for (final l in store.loans) {
+                for (final i in l.inst) {
+                  if (Loan.isPaid(i)) continue;
+                  final d = Loan.dueOf(i);
+                  if (d == null) continue;
+                  out.add(DueItem(
+                    'loan:${i['id']}',
+                    'loan',
+                    'سررسید قسط وام «${l.title}»',
+                    Icons.account_balance,
+                    cLoan,
+                    d,
+                    [
+                      ['وام', l.title],
+                      [l.taken ? 'وام‌دهنده' : 'وام‌گیرنده', l.lender.isEmpty ? '—' : l.lender],
+                      ['قسط', '${faDigits('${i['number']}')} از ${faDigits('${l.count}')}'],
+                      ['مبلغ قسط', money(Loan.amt(i))],
+                      ['تاریخ سررسید', fmtDate(d)],
+                      ['مانده کل وام', money(l.remaining)],
+                    ],
+                    [
+                      DueAction('پرداخت شد', cRec, () async {
+                        await db.from('loan_installments').update({'paid_at': ymdNow()}).eq('id', '${i['id']}');
+                      }),
+                    ],
+                  ));
+                }
+              }
+            }
+
+            if (alertPrefs.cheque) {
+              for (final x in store.cheques) {
+                if (!x.pending || x.guarantee || x.due == null) continue;
+                Future<void> setSt(String s) async {
+                  await db.from('cheques').update({'status': s, 'status_at': ymdNow()}).eq('id', x.id);
+                }
+
+                out.add(DueItem(
+                  'chq:${x.id}',
+                  'cheque',
+                  x.received ? 'سررسید چک دریافتی' : 'سررسید چک پرداختی',
+                  Icons.receipt_long,
+                  cWarn,
+                  x.due!,
+                  [
+                    ['نوع', x.received ? 'چک دریافتی' : 'چک پرداختی'],
+                    ['شماره چک', x.number.isEmpty ? '—' : faDigits(x.number)],
+                    if (x.sayad.isNotEmpty) ['شناسه صیاد', faDigits(x.sayad)],
+                    if (x.bank.isNotEmpty) ['بانک', x.bank + (x.branch.isEmpty ? '' : ' - شعبه ${x.branch}')],
+                    [x.received ? 'دریافت از' : 'پرداخت به', x.who.isEmpty ? '—' : x.who],
+                    ['مبلغ', money(x.amount)],
+                    ['تاریخ سررسید', fmtDate(x.due!)],
+                  ],
+                  [
+                    DueAction(x.received ? 'وصول / پاس شد' : 'پاس شد', cRec, () => setSt('cashed')),
+                    DueAction('برگشت خورد', cPay, () => setSt('bounced')),
+                    if (x.received) DueAction('واگذار شد', cPurple, () => setSt('endorsed')),
+                    DueAction('عودت شد', Colors.blueGrey, () => setSt('returned')),
+                  ],
+                ));
+              }
+            }
+
+            if (alertPrefs.acc) {
+              for (final a in store.accs) {
+                if (a.settled || a.due == null) continue;
+                out.add(DueItem(
+                  'acc:${a.id}',
+                  'acc',
+                  a.isRec ? 'سررسید طلب از ${a.who}' : 'سررسید بدهی به ${a.who}',
+                  a.isRec ? Icons.south_west : Icons.north_east,
+                  a.isRec ? cRec : cPay,
+                  a.due!,
+                  [
+                    ['عنوان حساب', a.title],
+                    ['شخص', a.who],
+                    ['نوع', a.isRec ? 'طلب' : 'بدهی'],
+                    ['مبلغ اولیه', money(a.principal)],
+                    ['پرداخت‌شده', money(a.paid)],
+                    ['مانده', money(a.remaining)],
+                    ['تاریخ سررسید', fmtDate(a.due!)],
+                  ],
+                  [
+                    DueAction('تسویه شد', cRec, () async {
+                      final rem = a.remaining;
+                      await db.from('transactions').insert({
+                        'user_id': uid(),
+                        'account_id': a.id,
+                        'type': 'payment',
+                        'amount': rem,
+                        'transaction_date': ymdNow(),
+                        'note': 'تسویه از طریق هشدار سررسید',
+                      });
+                      await db.from('accounts').update({'status': 'settled'}).eq('id', a.id);
+                    }),
+                  ],
+                ));
+              }
+            }
+            return out;
+          }
+
+          List<DueItem> dueNow() {
+            final n = DateTime.now();
+            final lim = DateTime(n.year, n.month, n.day).add(Duration(days: alertPrefs.lead));
+            final ms = n.millisecondsSinceEpoch;
+            final l = collectAllDue().where((e) {
+              if (DateTime(e.due.year, e.due.month, e.due.day).isAfter(lim)) return false;
+              final u = alertPrefs.snz[e.key];
+              return u == null || ms >= u;
+            }).toList()
+              ..sort((a, b) => a.due.compareTo(b.due));
+            return l;
+          }
+
+          // ---------- اعلان‌ها ----------
+          final FlutterLocalNotificationsPlugin _np = FlutterLocalNotificationsPlugin();
+
+          AndroidNotificationChannel _channel(int i) => AndroidNotificationChannel(
+                'due_alerts_$i',
+                'هشدار سررسید (${soundNames[i]})',
+                description: 'هشدار سررسید وام، چک و حساب‌ها',
+                importance: Importance.max,
+                playSound: true,
+                sound: i == 0 ? null : RawResourceAndroidNotificationSound('due_$i'),
+              );
+
+          NotificationDetails _details(int snd, String body, {bool actions = true}) => NotificationDetails(
+                android: AndroidNotificationDetails(
+                  'due_alerts_$snd',
+                  'هشدار سررسید (${soundNames[snd]})',
+                  channelDescription: 'هشدار سررسید وام، چک و حساب‌ها',
+                  importance: Importance.max,
+                  priority: Priority.high,
+                  playSound: true,
+                  sound: snd == 0 ? null : RawResourceAndroidNotificationSound('due_$snd'),
+                  category: AndroidNotificationCategory.reminder,
+                  styleInformation: BigTextStyleInformation(body),
+                  actions: actions
+                      ? [
+                          const AndroidNotificationAction('done', 'انجام شد', showsUserInterface: true),
+                          AndroidNotificationAction('snooze', 'تعویق ${durLabel(alertPrefs.snoozeMin)}',
+                              showsUserInterface: true),
+                        ]
+                      : null,
+                ),
+              );
+
+          class DueAlerts {
+            static bool _inited = false, _ready = false, _showing = false, _started = false;
+            static Timer? _timer;
+            static final List<NotificationResponse> _early = [];
+
+            static Future<void> init() async {
+              if (_inited) return;
+              _inited = true;
+              try {
+                tzdata.initializeTimeZones();
+                const init = InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher'));
+                await _np.initialize(init, onDidReceiveNotificationResponse: _onResp);
+                final a = _np.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+                for (var i = 0; i <= 4; i++) {
+                  await a?.createNotificationChannel(_channel(i));
+                }
+                final d = await _np.getNotificationAppLaunchDetails();
+                if ((d?.didNotificationLaunchApp ?? false) && d!.notificationResponse != null) {
+                  _onResp(d.notificationResponse!);
+                }
+              } catch (_) {}
+            }
+
+            static Future<bool> ensurePermission() async {
+              await init();
+              try {
+                final a = _np.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+                return await a?.requestNotificationsPermission() ?? true;
+              } catch (_) {
+                return false;
+              }
+            }
+
+            static Future<void> start() async {
+              if (_started) return;
+              _started = true;
+              await init();
+              await ensurePermission();
+              _ready = true;
+              for (final r in List<NotificationResponse>.from(_early)) {
+                await _handle(r);
+              }
+              _early.clear();
+              _timer = Timer.periodic(const Duration(seconds: 30), (_) => check());
+              await check();
+            }
+
+            static void _onResp(NotificationResponse r) {
+              if (!_ready) {
+                _early.add(r);
+                return;
+              }
+              _handle(r);
+            }
+
+            static Future<void> _handle(NotificationResponse r) async {
+              final key = r.payload;
+              if (key == null) return;
+              final it = collectAllDue().where((e) => e.key == key).firstOrNull;
+              if (it == null) {
+                try {
+                  await _np.cancel(key.hashCode & 0x7fffffff);
+                } catch (_) {}
+                return;
+              }
+              if (r.actionId == 'done') {
+                await _runAction(it, it.actions.first);
+              } else if (r.actionId == 'snooze') {
+                await snooze(it, Duration(minutes: alertPrefs.snoozeMin));
+              } else {
+                await check(forceKey: key);
+              }
+            }
+
+            static Future<void> _runAction(DueItem it, DueAction a) async {
+              try {
+                await a.run();
+              } catch (e) {
+                final c = navKey.currentState?.overlay?.context;
+                if (c != null && c.mounted) toast(c, e is String ? e : 'ثبت انجام نشد');
+              }
+              alertPrefs.snz.remove(it.key);
+              await alertPrefs.save();
+              try {
+                await _np.cancel(it.nid);
+              } catch (_) {}
+              await _afterAction();
+            }
+
+            static Future<void> snooze(DueItem it, Duration d) async {
+              final until = DateTime.now().add(d);
+              alertPrefs.snz[it.key] = until.millisecondsSinceEpoch;
+              await alertPrefs.save();
+              try {
+                await _np.cancel(it.nid);
+                await _np.zonedSchedule(
+                  it.nid,
+                  it.title,
+                  it.body,
+                  tz.TZDateTime.from(until, tz.UTC),
+                  _details(alertPrefs.sound, it.body),
+                  androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+                  payload: it.key,
+                );
+              } catch (_) {}
+            }
+
+            static Future<void> _notify(DueItem it) async {
+              try {
+                await _np.show(it.nid, it.title, it.body, _details(alertPrefs.sound, it.body), payload: it.key);
+              } catch (_) {}
+            }
+
+            static Future<void> preview(int snd) async {
+              await ensurePermission();
+              try {
+                await _np.show(
+                    990001, 'آزمایش صدای هشدار', soundNames[snd], _details(snd, soundNames[snd], actions: false));
+              } catch (_) {}
+            }
+
+            static Future<void> check({String? forceKey}) async {
+              if (_showing || !_ready) return;
+              if (navKey.currentState?.overlay?.context == null) return;
+              _showing = true;
+              try {
+                final done = <String>{};
+                for (var guard = 0; guard < 60; guard++) {
+                  var items = dueNow().where((e) => !done.contains(e.key)).toList();
+                  if (forceKey != null && !done.contains(forceKey)) {
+                    final f = collectAllDue().where((e) => e.key == forceKey).toList();
+                    if (f.isNotEmpty) items = [f.first, ...items.where((e) => e.key != forceKey)];
+                  }
+                  if (items.isEmpty) break;
+                  final it = items.first;
+                  done.add(it.key);
+                  await _present(it);
+                }
+              } finally {
+                _showing = false;
+              }
+            }
+
+            static Future<void> _present(DueItem it) async {
+              final ctx = navKey.currentState?.overlay?.context;
+              if (ctx == null || !ctx.mounted) return;
+              await _notify(it);
+              final res = await showDialog<_AlertResult>(
+                context: ctx,
+                barrierDismissible: false,
+                builder: (_) => _DueDialog(it),
+              );
+              try {
+                await _np.cancel(it.nid);
+              } catch (_) {}
+              if (res == null) return;
+              if (res.action != null) {
+                await _runAction(it, res.action!);
+              } else if (res.snooze != null) {
+                await snooze(it, res.snooze!);
+              }
+            }
+          }
+
+          class _AlertResult {
+            final DueAction? action;
+            final Duration? snooze;
+            const _AlertResult({this.action, this.snooze});
+          }
+
+          class _DueDialog extends StatefulWidget {
+            final DueItem it;
+            const _DueDialog(this.it);
+            @override
+            State<_DueDialog> createState() => _DueDialogState();
+          }
+
+          class _DueDialogState extends State<_DueDialog> {
+            static const presets = [10, 30, 60, 180, 720, 1440, 4320];
+            late int mins = alertPrefs.snoozeMin;
+
+            Future<void> _custom() async {
+              final n = TextEditingController();
+              var u = 60;
+              final r = await showDialog<int>(
+                context: context,
+                builder: (ctx) => StatefulBuilder(
+                  builder: (ctx, set) => AlertDialog(
+                    title: const Text('مدت تعویق دلخواه'),
+                    content: Column(mainAxisSize: MainAxisSize.min, children: [
+                      TextField(
+                          controller: n,
+                          keyboardType: TextInputType.number,
+                          autofocus: true,
+                          decoration: deco('عدد')),
+                      const SizedBox(height: 12),
+                      Wrap(spacing: 8, children: [
+                        for (final o in const [
+                          [1, 'دقیقه'],
+                          [60, 'ساعت'],
+                          [1440, 'روز'],
+                        ])
+                          ChoiceChip(
+                              label: Text(o[1] as String),
+                              selected: u == o[0],
+                              onSelected: (_) => set(() => u = o[0] as int)),
+                      ]),
+                    ]),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('انصراف')),
+                      FilledButton(
+                          onPressed: () {
+                            final v = parseAmount(n.text);
+                            if (v == null || v <= 0) return;
+                            Navigator.pop(ctx, v * u);
+                          },
+                          child: const Text('تأیید')),
+                    ],
+                  ),
+                ),
+              );
+              if (r != null) setState(() => mins = r);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final it = widget.it;
+              final th = Theme.of(context);
+              final isLate = it.daysLeft < 0;
+              final isPreset = presets.contains(mins);
+              return Dialog(
+                insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                clipBehavior: Clip.antiAlias,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: 440, maxHeight: MediaQuery.of(context).size.height * .82),
+                  child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Container(
+                      color: it.color.withValues(alpha: .15),
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                      child: Row(children: [
+                        CircleAvatar(backgroundColor: it.color, child: Icon(it.icon, color: Colors.white)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Text('هشدار سررسید', style: TextStyle(fontSize: 12)),
+                          Text(it.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        ])),
+                      ]),
+                    ),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                                color: (isLate ? cPay : cWarn).withValues(alpha: .15),
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Text(it.statusText,
+                                style: TextStyle(fontWeight: FontWeight.bold, color: isLate ? cPay : cWarn)),
+                          ),
+                          const SizedBox(height: 8),
+                          for (final d in it.details) kv(d[0], d[1]),
+                          const Divider(height: 24),
+                          const Text('تعویق به مدت', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 6),
+                          Wrap(spacing: 8, runSpacing: 4, children: [
+                            for (final m in presets)
+                              ChoiceChip(
+                                  label: Text(durLabel(m)), selected: mins == m, onSelected: (_) => setState(() => mins = m)),
+                            ChoiceChip(
+                                label: Text(isPreset ? 'دلخواه…' : 'دلخواه: ${durLabel(mins)}'),
+                                selected: !isPreset,
+                                onSelected: (_) => _custom()),
+                          ]),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                              onPressed: () =>
+                                  Navigator.pop(context, _AlertResult(snooze: Duration(minutes: mins))),
+                              icon: const Icon(Icons.snooze),
+                              label: Text('به تعویق بینداز (${durLabel(mins)})')),
+                          const Divider(height: 24),
+                          Text('ثبت نتیجه (بستن هشدار)', style: th.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 6),
+                          Wrap(spacing: 8, runSpacing: 8, children: [
+                            for (final a in it.actions)
+                              FilledButton(
+                                  style: FilledButton.styleFrom(backgroundColor: a.color),
+                                  onPressed: () => Navigator.pop(context, _AlertResult(action: a)),
+                                  child: Text(a.label)),
+                          ]),
+                          const SizedBox(height: 8),
+                        ]),
+                      ),
+                    ),
+                  ]),
+                ),
+              );
+            }
+          }
+
+          // ---------- صفحهٔ تنظیمات هشدار ----------
+          Widget alertSettingsTile(BuildContext c) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.notifications_active_outlined),
+                title: const Text('هشدار سررسید', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: const Text('پنجرهٔ هشدار و اعلان صدادار برای سررسید وام، چک و حساب‌ها'),
+                onTap: () => showAlertSettings(c),
+              );
+
+          void showAlertSettings(BuildContext c) {
+            showModalBottomSheet(
+              context: c,
+              isScrollControlled: true,
+              showDragHandle: true,
+              builder: (ctx) => SafeArea(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * .9),
+                  child: const SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 20), child: _AlertSettingsBody()),
+                ),
+              ),
+            );
+          }
+
+          class _AlertSettingsBody extends StatelessWidget {
+            const _AlertSettingsBody();
+
+            Widget _sw(String t, String sub, bool v, void Function(bool) f) => SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(t, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(sub),
+                value: v,
+                onChanged: (x) async {
+                  f(x);
+                  await alertPrefs.save();
+                  if (x) {
+                    await DueAlerts.start();
+                    await DueAlerts.ensurePermission();
+                    DueAlerts.check();
+                  }
+                });
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: alertPrefs,
+                builder: (c, _) {
+                  final p = alertPrefs;
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      const Icon(Icons.notifications_active_outlined),
+                      const SizedBox(width: 8),
+                      Text('هشدار سررسید',
+                          style: Theme.of(c).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                    ]),
+                    const SizedBox(height: 8),
+                    _sw('اقساط وام', 'هشدار سررسید قسط‌های پرداخت‌نشده', p.loan, (v) => p.loan = v),
+                    _sw('چک‌ها', 'هشدار سررسید چک‌های در انتظار', p.cheque, (v) => p.cheque = v),
+                    _sw('طلب و بدهی اشخاص', 'هشدار سررسید حساب‌های تسویه‌نشده', p.acc, (v) => p.acc = v),
+                    const Divider(),
+                    const Text('زمان هشدار', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 8, children: [
+                      for (final d in const [0, 1, 3, 7, 14])
+                        ChoiceChip(
+                            label: Text(d == 0 ? 'همان روز سررسید' : '${faDigits('$d')} روز قبل'),
+                            selected: p.lead == d,
+                            onSelected: (_) {
+                              p.lead = d;
+                              p.save();
+                            }),
+                    ]),
+                    const Text('سررسیدهای گذشته‌ی انجام‌نشده همیشه هشدار داده می‌شوند.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const Divider(),
+                    const Text('صدای اعلان', style: TextStyle(fontWeight: FontWeight.bold)),
+                    for (var i = 0; i < soundNames.length; i++)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading: Icon(p.sound == i ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                        title: Text(soundNames[i]),
+                        trailing: IconButton(
+                            tooltip: 'پخش آزمایشی',
+                            icon: const Icon(Icons.play_circle_outline),
+                            onPressed: () => DueAlerts.preview(i)),
+                        onTap: () {
+                          p.sound = i;
+                          p.save();
+                        },
+                      ),
+                    const Divider(),
+                    const Text('تعویق پیش‌فرض دکمهٔ اعلان', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 8, children: [
+                      for (final m in const [10, 30, 60, 180, 1440])
+                        ChoiceChip(
+                            label: Text(durLabel(m)),
+                            selected: p.snoozeMin == m,
+                            onSelected: (_) {
+                              p.snoozeMin = m;
+                              p.save();
+                            }),
+                    ]),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                        onPressed: () async {
+                          final ok = await DueAlerts.ensurePermission();
+                          if (c.mounted) toast(c, ok ? 'مجوز اعلان فعال است' : 'مجوز اعلان داده نشد؛ از تنظیمات گوشی فعال کنید');
+                        },
+                        icon: const Icon(Icons.verified_user_outlined),
+                        label: const Text('بررسی / درخواست مجوز اعلان')),
+                  ]);
+                },
+              );
+            }
+          }
+          ALERTS_EOF
           cat > lib/screens.dart <<'SCREENS_EOF'
           import 'dart:convert';
           import 'dart:async';
@@ -575,6 +1672,7 @@ jobs:
           import 'package:share_plus/share_plus.dart';
           import 'package:shared_preferences/shared_preferences.dart';
           import 'package:supabase_flutter/supabase_flutter.dart';
+          import 'alerts.dart';
           import 'data.dart';
 
           const cRec = Color(0xFF16A37F);
@@ -1007,14 +2105,37 @@ jobs:
             State<Home> createState() => _HomeState();
           }
 
-          class _HomeState extends State<Home> {
+          class _HomeState extends State<Home> with WidgetsBindingObserver {
             int i = 0;
+            Timer? _sync;
 
             @override
             void initState() {
               super.initState();
-              store.load().then((_) => autoBackupIfDue());
+              WidgetsBinding.instance.addObserver(this);
+              store.load().then((_) {
+                autoBackupIfDue();
+                DueAlerts.start();
+              });
               loadProfile().then((_) => store.refreshUI());
+              // همگام‌سازی خودکار تغییرات آفلاین وقتی اینترنت برگشت
+              _sync = Timer.periodic(const Duration(seconds: 25), (_) {
+                if (store.offline || store.pending > 0) store.load();
+              });
+            }
+
+            @override
+            void didChangeAppLifecycleState(AppLifecycleState state) {
+              if (state == AppLifecycleState.resumed) {
+                store.load().then((_) => DueAlerts.check());
+              }
+            }
+
+            @override
+            void dispose() {
+              _sync?.cancel();
+              WidgetsBinding.instance.removeObserver(this);
+              super.dispose();
             }
 
             @override
@@ -1076,7 +2197,9 @@ jobs:
                   child: const Row(children: [
                     Icon(Icons.cloud_off),
                     SizedBox(width: 8),
-                    Expanded(child: Text('اتصال برقرار نیست؛ آخرین داده‌های ذخیره‌شده فقط برای مشاهده نمایش داده می‌شود.')),
+                    Expanded(
+                        child: Text(
+                            'حالت آفلاین؛ می‌توانید داده‌ها را ببینید و ثبت کنید. تغییرات روی گوشی ذخیره می‌شود و با اتصال به اینترنت خودکار همگام می‌شود.${store.pending > 0 ? ' (${faDigits('${store.pending}')} تغییر در انتظار ارسال)' : ''}')),
                   ]),
                 )
               : const SizedBox.shrink();
@@ -1918,9 +3041,9 @@ jobs:
             };
             await run(c, () async {
               if (edit == null) {
-                await sb.from('contacts').insert({...body, 'user_id': uid()});
+                await db.from('contacts').insert({...body, 'user_id': uid()});
               } else {
-                await sb.from('contacts').update(body).eq('id', edit['id']);
+                await db.from('contacts').update(body).eq('id', edit['id']);
               }
             });
           }
@@ -2039,7 +3162,7 @@ jobs:
                               ok: 'حذف')) {
                             if (!c.mounted) return;
                             final done = await run(c, () async {
-                              await sb.from('contacts').delete().eq('id', id);
+                              await db.from('contacts').delete().eq('id', id);
                             });
                             if (done && c.mounted) Navigator.pop(c);
                           }
@@ -2115,7 +3238,7 @@ jobs:
                             if (await confirm(c, 'حذف حساب', 'حساب و همهٔ پرداخت‌های آن حذف می‌شود. ادامه می‌دهید؟', ok: 'حذف')) {
                               if (!c.mounted) return;
                               final done = await run(c, () async {
-                                await sb.from('accounts').delete().eq('id', a.id);
+                                await db.from('accounts').delete().eq('id', a.id);
                               });
                               if (done && c.mounted) Navigator.pop(c);
                             }
@@ -2198,8 +3321,8 @@ jobs:
                                     if (!c.mounted) return;
                                     final newRem = a.remaining + (t['amount'] as num).toInt();
                                     await run(c, () async {
-                                      await sb.from('transactions').delete().eq('id', t['id']);
-                                      await sb.from('accounts').update({'status': newRem <= 0 ? 'settled' : 'open'}).eq('id', a.id);
+                                      await db.from('transactions').delete().eq('id', t['id']);
+                                      await db.from('accounts').update({'status': newRem <= 0 ? 'settled' : 'open'}).eq('id', a.id);
                                     });
                                   }
                                 },
@@ -2240,7 +3363,7 @@ jobs:
               if (!mounted) return;
               setState(() => busy = true);
               final ok = await run(context, () async {
-                await sb.from('transactions').insert({
+                await db.from('transactions').insert({
                   'user_id': uid(),
                   'account_id': a.id,
                   'type': 'payment',
@@ -2248,7 +3371,7 @@ jobs:
                   'transaction_date': ymd(date),
                   'note': note.text.trim().isEmpty ? null : note.text.trim(),
                 });
-                await sb.from('accounts').update({'status': a.remaining - v <= 0 ? 'settled' : 'open'}).eq('id', a.id);
+                await db.from('accounts').update({'status': a.remaining - v <= 0 ? 'settled' : 'open'}).eq('id', a.id);
               });
               if (!mounted) return;
               setState(() => busy = false);
@@ -2359,7 +3482,7 @@ jobs:
               final ok = await run(context, () async {
                 var contact = cid;
                 if (contact == 'new') {
-                  final r = await sb.from('contacts').insert({'user_id': uid(), 'name': newName.text.trim()}).select('id').single();
+                  final r = await db.from('contacts').insert({'user_id': uid(), 'name': newName.text.trim()}).select('id').single();
                   contact = r['id'] as String;
                 }
                 final body = {
@@ -2372,9 +3495,9 @@ jobs:
                   'notes': notes.text.trim().isEmpty ? null : notes.text.trim(),
                 };
                 if (e == null) {
-                  await sb.from('accounts').insert({...body, 'user_id': uid(), 'currency': unit.value, 'status': 'open'});
+                  await db.from('accounts').insert({...body, 'user_id': uid(), 'currency': unit.value, 'status': 'open'});
                 } else {
-                  await sb.from('accounts').update({...body, 'status': amt - e.paid <= 0 ? 'settled' : 'open'}).eq('id', e.id);
+                  await db.from('accounts').update({...body, 'status': amt - e.paid <= 0 ? 'settled' : 'open'}).eq('id', e.id);
                 }
               });
               if (!mounted) return;
@@ -2625,7 +3748,7 @@ jobs:
                 ok: paid ? 'لغو پرداخت' : 'پرداخت شد');
             if (!ok || !c.mounted) return;
             await run(c, () async {
-              await sb
+              await db
                   .from('loan_installments')
                   .update({'paid_at': paid ? null : ymd(DateTime.now())}).eq('id', i['id']);
             });
@@ -2865,7 +3988,7 @@ jobs:
                             final ok = await confirm(c, 'حذف وام', 'وام و همهٔ اقساط آن حذف شود؟', ok: 'حذف');
                             if (!ok || !c.mounted) return;
                             final done = await run(c, () async {
-                              await sb.from('loans').delete().eq('id', l.id);
+                              await db.from('loans').delete().eq('id', l.id);
                             });
                             if (done && c.mounted) Navigator.pop(c);
                           }),
@@ -3033,10 +4156,10 @@ jobs:
                   'notes': notes.text.trim().isEmpty ? null : notes.text.trim(),
                 };
                 if (e != null) {
-                  await sb.from('loans').update(body).eq('id', e.id);
+                  await db.from('loans').update(body).eq('id', e.id);
                   return;
                 }
-                final r = await sb.from('loans').insert({
+                final r = await db.from('loans').insert({
                   ...body,
                   'user_id': uid(),
                   'principal_amount': amt,
@@ -3049,7 +4172,7 @@ jobs:
                   'currency': unit.value,
                 }).select('id').single();
                 final loanId = r['id'] as String;
-                await sb.from('loan_installments').insert([
+                await db.from('loan_installments').insert([
                   for (var k = 0; k < n!; k++)
                     {
                       'user_id': uid(),
@@ -3373,7 +4496,7 @@ jobs:
 
             Future<void> _setStatus(BuildContext c, Cheque x, String s) async {
               await run(c, () async {
-                await sb.from('cheques').update({
+                await db.from('cheques').update({
                   'status': s,
                   'status_at': s == 'pending' ? null : ymd(DateTime.now()),
                 }).eq('id', x.id);
@@ -3403,7 +4526,7 @@ jobs:
                             final ok = await confirm(c, 'حذف چک', 'این چک حذف شود؟', ok: 'حذف');
                             if (!ok || !c.mounted) return;
                             final done = await run(c, () async {
-                              await sb.from('cheques').delete().eq('id', x.id);
+                              await db.from('cheques').delete().eq('id', x.id);
                             });
                             if (done && c.mounted) Navigator.pop(c);
                           }),
@@ -3582,7 +4705,7 @@ jobs:
               final ok = await run(context, () async {
                 var contact = cid;
                 if (contact == 'new') {
-                  final r = await sb
+                  final r = await db
                       .from('contacts')
                       .insert({'user_id': uid(), 'name': newName.text.trim()})
                       .select('id')
@@ -3604,9 +4727,9 @@ jobs:
                   'notes': t(notes),
                 };
                 if (e == null) {
-                  await sb.from('cheques').insert({...body, 'user_id': uid(), 'status': 'pending', 'currency': unit.value});
+                  await db.from('cheques').insert({...body, 'user_id': uid(), 'status': 'pending', 'currency': unit.value});
                 } else {
-                  await sb.from('cheques').update(body).eq('id', e.id);
+                  await db.from('cheques').update(body).eq('id', e.id);
                 }
               });
               if (!mounted) return;
@@ -4848,6 +5971,7 @@ jobs:
                     ]),
                     const SizedBox(height: 8),
                     bgTile(ctx, 'home'),
+                    alertSettingsTile(ctx),
                     bgTile(ctx, 'navbar', title: 'رنگ نوار پایین'),
                     bgTile(ctx, 'fab', title: 'رنگ کادر اضافه کردن اشخاص'),
                     const Divider(),
@@ -5091,7 +6215,7 @@ jobs:
               await clearCustomLock();
               try {
                 await store.clear();
-                await sb.auth.signOut();
+                await doSignOut();
               } catch (_) {}
               widget.onUnlocked();
             }
@@ -5395,6 +6519,8 @@ jobs:
                     const SizedBox(height: 8),
                     if (bgKey != null) ...[
                       bgTile(ctx, bgKey),
+                      if (const ['loans', 'cheq', 'accs_rec', 'accs_pay', 'accs_all', 'pers'].contains(bgKey))
+                        alertSettingsTile(ctx),
                       const Divider(),
                     ],
                     if (layoutKey != null) ...[
@@ -6490,7 +7616,7 @@ jobs:
 
             Future<void> _setUnit(BuildContext c, String u) async {
               await run(c, () async {
-                await sb.from('profiles').update({'currency_unit': u}).eq('user_id', uid());
+                await db.from('profiles').update({'currency_unit': u}).eq('user_id', uid());
                 unit.value = u;
               }, reload: false);
             }
@@ -6536,7 +7662,7 @@ jobs:
                                 final n = await _ask(c, 'نام نمایشی', 'نام', init: profileName);
                                 if (n == null || !c.mounted) return;
                                 await run(c, () async {
-                                  await sb.from('profiles').update({'display_name': n}).eq('user_id', uid());
+                                  await db.from('profiles').update({'display_name': n}).eq('user_id', uid());
                                   profileName = n;
                                 }, reload: false);
                                 store.refreshUI();
@@ -6623,7 +7749,7 @@ jobs:
                               title: const Text('خروج از حساب'),
                               onTap: () async {
                                 await store.clear();
-                                await sb.auth.signOut();
+                                await doSignOut();
                               }),
                           ListTile(
                               contentPadding: EdgeInsets.zero,
@@ -6643,7 +7769,7 @@ jobs:
                                 if (done) {
                                   await store.clear();
                                   try {
-                                    await sb.auth.signOut();
+                                    await doSignOut();
                                   } catch (_) {}
                                 }
                               }),
@@ -7004,6 +8130,89 @@ jobs:
             fi
           done
           cat "$MA"
+
+      - name: Prepare Android for due-date notifications
+        run: |
+          set -euo pipefail
+          MF=android/app/src/main/AndroidManifest.xml
+          for P in POST_NOTIFICATIONS RECEIVE_BOOT_COMPLETED VIBRATE; do
+            sed -i "s#<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">#&\n    <uses-permission android:name=\"android.permission.$P\"/>#" "$MF"
+          done
+          python3 - <<'MF_EOF'
+          mf = 'android/app/src/main/AndroidManifest.xml'
+          t = open(mf, encoding='utf-8').read()
+          rec = """    <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+              <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+                  <intent-filter>
+                      <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                      <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                      <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                      <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+                  </intent-filter>
+              </receiver>
+          """
+          assert '</application>' in t
+          t = t.replace('</application>', rec + '    </application>', 1)
+          open(mf, 'w', encoding='utf-8').write(t)
+          print('manifest patched')
+          MF_EOF
+          grep -q "POST_NOTIFICATIONS" "$MF" || { echo "POST_NOTIFICATIONS missing"; exit 1; }
+          python3 - <<'GR_EOF'
+          import os, re
+          kts = 'android/app/build.gradle.kts'
+          grv = 'android/app/build.gradle'
+          if os.path.exists(kts):
+              f = kts
+              t = open(f, encoding='utf-8').read()
+              assert 'compileOptions {' in t, 'compileOptions not found'
+              t = t.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true', 1)
+              dep = '    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n'
+              if re.search(r'^dependencies\s*\{', t, re.M):
+                  t = re.sub(r'^dependencies\s*\{', 'dependencies {\n' + dep, t, count=1, flags=re.M)
+              else:
+                  t += '\ndependencies {\n' + dep + '}\n'
+          else:
+              f = grv
+              t = open(f, encoding='utf-8').read()
+              assert 'compileOptions {' in t, 'compileOptions not found'
+              t = t.replace('compileOptions {', 'compileOptions {\n        coreLibraryDesugaringEnabled true', 1)
+              dep = "    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n"
+              if re.search(r'^dependencies\s*\{', t, re.M):
+                  t = re.sub(r'^dependencies\s*\{', 'dependencies {\n' + dep, t, count=1, flags=re.M)
+              else:
+                  t += '\ndependencies {\n' + dep + '}\n'
+          open(f, 'w', encoding='utf-8').write(t)
+          print('desugaring enabled in', f)
+          GR_EOF
+          mkdir -p android/app/src/main/res/raw
+          python3 - <<'SND_EOF'
+          import wave, struct, math
+          R = 22050
+          def tone(freq, dur, vol=0.8, decay=4.0, attack=0.01):
+              n = int(R * dur); out = []
+              for i in range(n):
+                  t = i / R
+                  env = min(1.0, t / attack) * math.exp(-decay * t / dur)
+                  out.append(vol * env * math.sin(2 * math.pi * freq * t))
+              return out
+          def silence(d): return [0.0] * int(R * d)
+          def save(name, samples):
+              w = wave.open('android/app/src/main/res/raw/' + name + '.wav', 'wb')
+              w.setnchannels(1); w.setsampwidth(2); w.setframerate(R)
+              w.writeframes(b''.join(struct.pack('<h', int(max(-1, min(1, s)) * 32000)) for s in samples))
+              w.close()
+          save('due_1', tone(880, .35) + tone(1320, .7))
+          save('due_2', tone(523, .22, decay=2) + tone(659, .22, decay=2) + tone(784, .22, decay=2) + tone(1047, .6))
+          b = []
+          for _ in range(4): b += tone(1000, .16, decay=0.5) + silence(.1)
+          save('due_3', b)
+          save('due_4', tone(440, 1.4, vol=.6, decay=2.5, attack=.15))
+          SND_EOF
+          cat > android/app/src/main/res/raw/keep.xml <<'KEEP_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@raw/due_*" />
+          KEEP_EOF
+          ls -la android/app/src/main/res/raw
 
       - name: Prepare signing keystore
         run: |
