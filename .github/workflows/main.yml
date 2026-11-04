@@ -2194,9 +2194,9 @@ jobs:
                   decoration: BoxDecoration(
                       color: Theme.of(c).colorScheme.errorContainer,
                       borderRadius: BorderRadius.circular(16)),
-                  child: const Row(children: [
-                    Icon(Icons.cloud_off),
-                    SizedBox(width: 8),
+                  child: Row(children: [
+                    const Icon(Icons.cloud_off),
+                    const SizedBox(width: 8),
                     Expanded(
                         child: Text(
                             'حالت آفلاین؛ می‌توانید داده‌ها را ببینید و ثبت کنید. تغییرات روی گوشی ذخیره می‌شود و با اتصال به اینترنت خودکار همگام می‌شود.${store.pending > 0 ? ' (${faDigits('${store.pending}')} تغییر در انتظار ارسال)' : ''}')),
