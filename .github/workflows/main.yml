@@ -236,12 +236,27 @@ jobs:
             }
           }
 
-          Future<bool> authenticateUser(String reason) async {
+          /// ورود مستقیم با اثر انگشت (بدون پنجرهٔ انتخاب روش و بدون کادر تأیید چهره).
+          /// اگر زیست‌سنجی در گوشی تنظیم نشده باشد، به رمز/الگوی گوشی برمی‌گردد.
+          /// [credential] = true: مستقیم رمز/الگوی گوشی را می‌خواهد.
+          Future<bool> authenticateUser(String reason, {bool credential = false}) async {
             authBusy = true;
             try {
+              if (!credential) {
+                try {
+                  return await _la.authenticate(
+                    localizedReason: reason,
+                    options: const AuthenticationOptions(
+                        biometricOnly: true, stickyAuth: true, sensitiveTransaction: false),
+                  );
+                } catch (_) {
+                  // زیست‌سنجی در دسترس نیست؛ ادامه با رمز گوشی
+                }
+              }
               return await _la.authenticate(
                 localizedReason: reason,
-                options: const AuthenticationOptions(biometricOnly: false, stickyAuth: true),
+                options: const AuthenticationOptions(
+                    biometricOnly: false, stickyAuth: true, sensitiveTransaction: false),
               );
             } catch (_) {
               return false;
@@ -454,10 +469,22 @@ jobs:
             bool _flushing = false;
             bool _qReady = false;
             final List<Map<String, dynamic>> _q = [];
-            List<Acc> get accs => rawAccs.map(Acc.new).toList();
-            List<Loan> get loans => rawLoans.map(Loan.new).toList();
-            List<Cheque> get cheques => rawCheques.map(Cheque.new).toList();
+            List<Acc>? _accC;
+            List<Loan>? _loanC;
+            List<Cheque>? _chqC;
+            // نتیجهٔ محاسبه تا تغییر بعدی داده نگه داشته می‌شود (برای روانی برنامه)
+            List<Acc> get accs => _accC ??= rawAccs.map(Acc.new).toList();
+            List<Loan> get loans => _loanC ??= rawLoans.map(Loan.new).toList();
+            List<Cheque> get cheques => _chqC ??= rawCheques.map(Cheque.new).toList();
             int get pending => _q.length;
+
+            @override
+            void notifyListeners() {
+              _accC = null;
+              _loanC = null;
+              _chqC = null;
+              super.notifyListeners();
+            }
 
             void refreshUI() => notifyListeners();
 
@@ -2264,7 +2291,7 @@ jobs:
             }
 
             void _open(BuildContext c, Widget page) =>
-                Navigator.push(c, MaterialPageRoute(builder: (_) => page));
+                Navigator.push(c, FastRoute(builder: (_) => page));
 
             // لیست طلب‌ها یا بدهی‌ها
             void _list(BuildContext c, String type) => _open(
@@ -2859,7 +2886,7 @@ jobs:
                     ],
                   ),
                 ]),
-                onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => AccountPage(a.id))),
+                onTap: () => Navigator.push(c, FastRoute(builder: (_) => AccountPage(a.id))),
               );
             }
 
@@ -2902,7 +2929,7 @@ jobs:
                   ]),
                 ]),
                 onTap: () => Navigator.push(
-                    c, MaterialPageRoute(builder: (_) => AccountPage(a.id))),
+                    c, FastRoute(builder: (_) => AccountPage(a.id))),
               );
             }
           }
@@ -2991,10 +3018,8 @@ jobs:
                         )),
                         const SizedBox(height: 4),
                     ]),
-                    children: [
-                        if (list.isEmpty) emptyBox('حسابی پیدا نشد'),
-                        ...list.map((a) => AccTile(a)),
-                    ],
+                    itemCount: list.isEmpty ? 1 : list.length,
+                    itemBuilder: (c, i) => list.isEmpty ? emptyBox('حسابی پیدا نشد') : AccTile(list[i]),
                   );
                 },
               );
@@ -3116,7 +3141,7 @@ jobs:
                                   style: TextStyle(color: col, fontWeight: FontWeight.bold)),
                             ]),
                             onTap: () => Navigator.push(c,
-                                MaterialPageRoute(builder: (_) => PersonPage('${p['id']}'))),
+                                FastRoute(builder: (_) => PersonPage('${p['id']}'))),
                           );
                         }),
                       ],
@@ -3420,7 +3445,7 @@ jobs:
 
           // ---------- account form ----------
           void openAccountForm(BuildContext c, {Acc? edit, String? contactId}) {
-            Navigator.push(c, MaterialPageRoute(builder: (_) => AccountFormPage(edit: edit, contactId: contactId)));
+            Navigator.push(c, FastRoute(builder: (_) => AccountFormPage(edit: edit, contactId: contactId)));
           }
 
           class AccountFormPage extends StatefulWidget {
@@ -3659,28 +3684,43 @@ jobs:
             int get count => (m['installment_count'] as num).toInt();
             int get instAmount => (m['installment_amount'] as num).toInt();
             int get period => ((m['period_months'] ?? 1) as num).toInt();
+            List<Map<String, dynamic>>? _inst;
             List<Map<String, dynamic>> get inst {
+              if (_inst != null) return _inst!;
               final l = List<Map<String, dynamic>>.from((m['loan_installments'] as List?) ?? []);
               l.sort((a, b) => (a['number'] as num).compareTo(b['number'] as num));
-              return l;
+              return _inst = l;
             }
 
             static bool isPaid(Map<String, dynamic> i) => i['paid_at'] != null;
             static int amt(Map<String, dynamic> i) => (i['amount'] as num).toInt();
             static DateTime? dueOf(Map<String, dynamic> i) => DateTime.tryParse('${i['due_at']}');
-            int get total => inst.fold<int>(0, (s, i) => s + amt(i));
-            int get paidAmount => inst.where(isPaid).fold<int>(0, (s, i) => s + amt(i));
+            int? _total, _paidAmount, _paidCount;
+            int get total => _total ??= inst.fold<int>(0, (s, i) => s + amt(i));
+            int get paidAmount => _paidAmount ??= inst.where(isPaid).fold<int>(0, (s, i) => s + amt(i));
             int get remaining => total - paidAmount;
-            int get paidCount => inst.where(isPaid).length;
+            int get paidCount => _paidCount ??= inst.where(isPaid).length;
             bool get done => inst.isNotEmpty && paidCount == inst.length;
+            bool _nextDone = false;
+            Map<String, dynamic>? _next;
+            DateTime? _nextDueC;
             Map<String, dynamic>? get next {
+              if (_nextDone) return _next;
+              _nextDone = true;
               for (final i in inst) {
-                if (!isPaid(i)) return i;
+                if (!isPaid(i)) {
+                  _nextDueC = dueOf(i);
+                  return _next = i;
+                }
               }
               return null;
             }
 
-            DateTime? get nextDue => next == null ? null : dueOf(next!);
+            DateTime? get nextDue {
+              next;
+              return _nextDueC;
+            }
+
             bool get overdue => nextDue != null && nextDue!.isBefore(_today0());
             double get progress => total == 0 ? 0 : paidAmount / total;
           }
@@ -3801,7 +3841,7 @@ jobs:
                 ]),
                 floatingActionButton: FloatingActionButton.extended(
                   onPressed: () => Navigator.push(
-                      context, MaterialPageRoute(builder: (_) => const LoanFormPage())),
+                      context, FastRoute(builder: (_) => const LoanFormPage())),
                   icon: const Icon(Icons.add),
                   label: const Text('ثبت وام'),
                 ),
@@ -3913,7 +3953,7 @@ jobs:
                   ],
                 ]),
                 onTap: () => Navigator.push(
-                    c, MaterialPageRoute(builder: (_) => LoanDetailPage(l.id))),
+                    c, FastRoute(builder: (_) => LoanDetailPage(l.id))),
               );
             }
 
@@ -3940,7 +3980,7 @@ jobs:
                       icon: const Icon(Icons.check_circle_outline),
                       onPressed: () => toggleInstallment(c, i)),
                 ]),
-                onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => LoanDetailPage(l.id))),
+                onTap: () => Navigator.push(c, FastRoute(builder: (_) => LoanDetailPage(l.id))),
               );
             }
           }
@@ -3981,7 +4021,7 @@ jobs:
                       IconButton(
                           icon: const Icon(Icons.edit_outlined),
                           onPressed: () => Navigator.push(
-                              c, MaterialPageRoute(builder: (_) => LoanFormPage(edit: l)))),
+                              c, FastRoute(builder: (_) => LoanFormPage(edit: l)))),
                       IconButton(
                           icon: const Icon(Icons.delete_outline),
                           onPressed: () async {
@@ -4011,43 +4051,49 @@ jobs:
                           onChanged: (v) => setState(() => tab = v),
                         ),
                       ),
-                      children: [
-                        if (shownInst.isEmpty)
-                          emptyBox(tab == 'paid' ? 'قسط پرداخت‌شده‌ای وجود ندارد' : 'قسط پرداخت‌نشده‌ای وجود ندارد'),
-                        ...shownInst.map((i) {
-                          final paid = Loan.isPaid(i);
-                          final d = Loan.dueOf(i);
-                          final lateFlag = !paid && d != null && d.isBefore(_today0());
-                          final ic = paid ? cRec : (lateFlag ? cPay : cWarn);
-                          return cardBox(
-                            c,
-                            'loand_card',
-                            Row(children: [
-                              CircleAvatar(
-                                  radius: 16,
-                                  backgroundColor: ic.withValues(alpha: .15),
-                                  child: Text(faDigits('${i['number']}'),
-                                      style: TextStyle(color: ic, fontWeight: FontWeight.bold))),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text(money(Loan.amt(i)), style: const TextStyle(fontWeight: FontWeight.bold)),
-                                Text(
-                                    paid
-                                        ? 'پرداخت: ${fmtDate(DateTime.parse('${i['paid_at']}'))}'
-                                        : 'سررسید: ${d == null ? '' : fmtDate(d)}',
-                                    style: const TextStyle(fontSize: 12)),
-                              ])),
-                              badge(paid ? 'پرداخت‌شده' : (lateFlag ? 'معوق' : 'در انتظار'), ic),
-                            ]),
-                            vpad: 10,
-                            onTap: () => toggleInstallment(c, i),
+                      itemCount: shownInst.isEmpty ? 2 : shownInst.length + 1,
+                      itemBuilder: (c, idx) {
+                        if (shownInst.isEmpty && idx == 0) {
+                          return emptyBox(tab == 'paid' ? 'قسط پرداخت‌شده‌ای وجود ندارد' : 'قسط پرداخت‌نشده‌ای وجود ندارد');
+                        }
+                        final last = shownInst.isEmpty ? 1 : shownInst.length;
+                        if (idx == last) {
+                          return const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text('برای ثبت یا لغو پرداخت هر قسط، روی آن بزنید.',
+                                textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 12)),
                           );
-                        }),
-                        const SizedBox(height: 8),
-                        const Text('برای ثبت یا لغو پرداخت هر قسط، روی آن بزنید.',
-                            textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
+                        }
+                        final i = shownInst[idx];
+                        final paid = Loan.isPaid(i);
+                        final d = Loan.dueOf(i);
+                        final lateFlag = !paid && d != null && d.isBefore(_today0());
+                        final ic = paid ? cRec : (lateFlag ? cPay : cWarn);
+                        return cardBox(
+                          c,
+                          'loand_card',
+                          Row(children: [
+                            CircleAvatar(
+                                radius: 16,
+                                backgroundColor: ic.withValues(alpha: .15),
+                                child: Text(faDigits('${i['number']}'),
+                                    style: TextStyle(color: ic, fontWeight: FontWeight.bold))),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(money(Loan.amt(i)), style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text(
+                                  paid
+                                      ? 'پرداخت: ${fmtDate(DateTime.parse('${i['paid_at']}'))}'
+                                      : 'سررسید: ${d == null ? '' : fmtDate(d)}',
+                                  style: const TextStyle(fontSize: 12)),
+                            ])),
+                            badge(paid ? 'پرداخت‌شده' : (lateFlag ? 'معوق' : 'در انتظار'), ic),
+                          ]),
+                          vpad: 10,
+                          onTap: () => toggleInstallment(c, i),
+                        );
+                      },
                     ),
                   );
                 },
@@ -4343,7 +4389,7 @@ jobs:
                 ]),
                 floatingActionButton: FloatingActionButton.extended(
                   onPressed: () => Navigator.push(
-                      context, MaterialPageRoute(builder: (_) => ChequeFormPage(initDir: dir))),
+                      context, FastRoute(builder: (_) => ChequeFormPage(initDir: dir))),
                   icon: const Icon(Icons.add),
                   label: const Text('ثبت چک'),
                 ),
@@ -4414,10 +4460,8 @@ jobs:
                                     ])),
                               ],
                             ]),
-                          children: [
-                            if (list.isEmpty) emptyBox('چکی یافت نشد'),
-                            ...list.map((x) => _tile(c, x)),
-                          ],
+                          itemCount: list.isEmpty ? 1 : list.length,
+                          itemBuilder: (c, i) => list.isEmpty ? emptyBox('چکی یافت نشد') : _tile(c, list[i]),
                       );
                     },
                   ),
@@ -4475,7 +4519,7 @@ jobs:
                   ]),
                 ]),
                 onTap: () =>
-                    Navigator.push(c, MaterialPageRoute(builder: (_) => ChequeDetailPage(x.id))),
+                    Navigator.push(c, FastRoute(builder: (_) => ChequeDetailPage(x.id))),
               );
             }
           }
@@ -4519,7 +4563,7 @@ jobs:
                       IconButton(
                           icon: const Icon(Icons.edit_outlined),
                           onPressed: () => Navigator.push(
-                              c, MaterialPageRoute(builder: (_) => ChequeFormPage(edit: x)))),
+                              c, FastRoute(builder: (_) => ChequeFormPage(edit: x)))),
                       IconButton(
                           icon: const Icon(Icons.delete_outline),
                           onPressed: () async {
@@ -5030,12 +5074,13 @@ jobs:
             final cols = (colors ?? [col, col]).map((e) => e.withValues(alpha: a)).toList();
             final r = BorderRadius.circular(radius);
             final tc = s.textColor != null ? Color(s.textColor!) : null;
-            final mq = MediaQuery.of(c);
-            final content = MediaQuery(
-              data: mq.copyWith(textScaler: TextScaler.linear(s.textScale)),
-              child: DefaultTextStyle.merge(
-                  style: tc == null ? null : TextStyle(color: tc), child: child),
-            );
+            Widget content = tc == null ? child : DefaultTextStyle.merge(style: TextStyle(color: tc), child: child);
+            if (s.textScale != 1.0) {
+              content = MediaQuery(
+                data: MediaQuery.of(c).copyWith(textScaler: TextScaler.linear(s.textScale)),
+                child: content,
+              );
+            }
             Widget box = Material(
               type: MaterialType.transparency,
               child: Ink(
@@ -5183,6 +5228,20 @@ jobs:
                 },
               );
             }
+          }
+
+          /// گذار سبک بین صفحه‌ها (محو شدن ساده؛ بدون لگ)
+          class FastRoute<T> extends PageRouteBuilder<T> {
+            FastRoute({required WidgetBuilder builder})
+                : super(
+                    pageBuilder: (c, a, s) => builder(c),
+                    transitionDuration: const Duration(milliseconds: 160),
+                    reverseTransitionDuration: const Duration(milliseconds: 130),
+                    transitionsBuilder: (c, a, s, child) => FadeTransition(
+                      opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
+                      child: child,
+                    ),
+                  );
           }
 
           // ---------- پس‌زمینهٔ اختصاصی هر صفحه ----------
@@ -5545,6 +5604,8 @@ jobs:
           class FixedHeaderList extends StatelessWidget {
             final Widget header;
             final List<Widget> children;
+            final int? itemCount;
+            final IndexedWidgetBuilder? itemBuilder;
             final Future<void> Function() onRefresh;
             final bool fade;
             final bool lockHeader;
@@ -5552,7 +5613,9 @@ jobs:
             const FixedHeaderList(
                 {super.key,
                 required this.header,
-                required this.children,
+                this.children = const [],
+                this.itemCount,
+                this.itemBuilder,
                 required this.onRefresh,
                 this.fade = true,
                 this.lockHeader = false,
@@ -5579,8 +5642,9 @@ jobs:
                           physics: const AlwaysScrollableScrollPhysics(),
                           cacheExtent: 600,
                           padding: EdgeInsets.fromLTRB(16, kFadeH, 16, bottomPad),
-                          itemCount: children.length,
-                          itemBuilder: (_, i) => RepaintBoundary(child: children[i]),
+                          itemCount: itemBuilder != null ? itemCount : children.length,
+                          itemBuilder: (c, i) =>
+                              RepaintBoundary(child: itemBuilder != null ? itemBuilder!(c, i) : children[i]),
                         ),
                       ),
                     ),
@@ -6281,7 +6345,7 @@ jobs:
             if (customLock.value == 'none') return true;
             final ok = await Navigator.push<bool>(
                 c,
-                MaterialPageRoute(
+                FastRoute(
                     builder: (_) => Scaffold(
                           appBar: AppBar(title: const Text('تأیید قفل فعلی')),
                           body: Builder(
@@ -6293,7 +6357,7 @@ jobs:
 
           Future<void> startLockSetup(BuildContext c, String type) async {
             if (!await verifyCurrentLock(c) || !c.mounted) return;
-            await Navigator.push(c, MaterialPageRoute(builder: (_) => LockSetupPage(type)));
+            await Navigator.push(c, FastRoute(builder: (_) => LockSetupPage(type)));
           }
 
           class LockSetupPage extends StatefulWidget {
@@ -7464,7 +7528,7 @@ jobs:
               }
             }
 
-            Future<void> _unlock() async {
+            Future<void> _unlock({bool credential = false}) async {
               if (authBusy || !mounted) return;
               if (!await deviceCanLock()) {
                 // قفل صفحهٔ گوشی برداشته شده؛ برای جلوگیری از قفل‌ماندن، قفل برنامه خاموش می‌شود
@@ -7472,7 +7536,8 @@ jobs:
                 if (mounted) setState(() => locked = customLock.value != 'none');
                 return;
               }
-              final ok = await authenticateUser('برای ورود به حساب‌یار هویت خود را تأیید کنید');
+              final ok = await authenticateUser('برای ورود به حساب‌یار هویت خود را تأیید کنید',
+                  credential: credential);
               if (!mounted) return;
               setState(() {
                 if (ok) {
@@ -7521,6 +7586,11 @@ jobs:
                             onPressed: _unlock,
                             icon: const Icon(Icons.fingerprint),
                             label: const Text('باز کردن قفل'),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () => _unlock(credential: true),
+                            child: const Text('ورود با رمز یا الگوی گوشی'),
                           ),
                         ]),
                       ),
@@ -7723,7 +7793,7 @@ jobs:
                           ])),
                           const Icon(Icons.chevron_left),
                         ]),
-                        onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => const SecurityPage()))),
+                        onTap: () => Navigator.push(c, FastRoute(builder: (_) => const SecurityPage()))),
                     card(
                         c,
                         Column(children: [
