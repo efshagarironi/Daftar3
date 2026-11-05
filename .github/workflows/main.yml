@@ -2277,6 +2277,32 @@ jobs:
             State<Home> createState() => _HomeState();
           }
 
+          /// ناحیهٔ دیدنی محتوای صفحه: همه‌چیز بالای لبهٔ پایینِ نوار پایین، منهای خودِ نوار (با همان گردی).
+          /// هر چه از زیر نوار پایین رد شود، کاملاً پنهان می‌ماند و از آن طرف دیده نمی‌شود.
+          class _NavHideClipper extends CustomClipper<Path> {
+            final double gapBelow; // فاصلهٔ لبهٔ پایین نوار تا پایین صفحه
+            final double barH, widthFactor, radius;
+            _NavHideClipper(this.gapBelow, this.barH, this.widthFactor, this.radius);
+
+            @override
+            Path getClip(Size size) {
+              final bottom = math.max(0.0, size.height - gapBelow);
+              final top = math.max(0.0, bottom - barH);
+              final w = size.width * widthFactor;
+              final left = (size.width - w) / 2;
+              final r = math.max(0.0, math.min(radius, math.min(barH, w) / 2));
+              return Path.combine(
+                PathOperation.difference,
+                Path()..addRect(Rect.fromLTRB(0, 0, size.width, bottom)),
+                Path()..addRRect(RRect.fromLTRBR(left, top, left + w, bottom, Radius.circular(r))),
+              );
+            }
+
+            @override
+            bool shouldReclip(_NavHideClipper o) =>
+                o.gapBelow != gapBelow || o.barH != barH || o.widthFactor != widthFactor || o.radius != radius;
+          }
+
           const _navItems = [
             NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'خانه'),
             NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
@@ -2331,13 +2357,31 @@ jobs:
                 pageKey: const ['home', 'backup', 'settings'][i],
                 child: Scaffold(
                 extendBody: true,
-                body: SafeArea(
-                  bottom: false,
-                  child: IndexedStack(index: i, children: const [
-                    DashboardPage(),
-                    BackupPage(),
-                    SettingsPage(),
-                  ]),
+                // محتوا زیر نوار پایین پنهان می‌شود و از آن طرف (فاصلهٔ زیر نوار) دیده نمی‌شود
+                body: ListenableBuilder(
+                  listenable: uiStyles,
+                  builder: (c, child) {
+                    final ns = uiStyles.of('home_nav');
+                    final bd = ns.border ? ns.bw : (ns.glass ? 1.2 : 0.0); // ضخامت خط دور نوار
+                    return ClipPath(
+                      clipper: _NavHideClipper(
+                        MediaQuery.viewPaddingOf(c).bottom + uiStyles.n('nav_lift', 10),
+                        uiStyles.n('nav_h', 80) + 2 * bd,
+                        uiStyles.n('nav_w', .95).clamp(.5, 1.0).toDouble(),
+                        uiStyles.n('nav_r', 20),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: child,
+                    );
+                  },
+                  child: SafeArea(
+                    bottom: false,
+                    child: IndexedStack(index: i, children: const [
+                      DashboardPage(),
+                      BackupPage(),
+                      SettingsPage(),
+                    ]),
+                  ),
                 ),
                 floatingActionButton: i == 0
                     ? ListenableBuilder(
