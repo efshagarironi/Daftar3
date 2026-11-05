@@ -1646,69 +1646,74 @@ jobs:
                 builder: (c, _) {
                   final p = alertPrefs;
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      const Icon(Icons.notifications_active_outlined),
-                      const SizedBox(width: 8),
-                      Text('هشدار سررسید',
-                          style: Theme.of(c).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                    mainCard(c, Icons.notifications_active_outlined, 'هشدار سررسید', [
+                      subBox(c, _sw('اقساط وام', 'هشدار سررسید قسط‌های پرداخت‌نشده', p.loan, (v) => p.loan = v)),
+                      subBox(c, _sw('چک‌ها', 'هشدار سررسید چک‌های در انتظار', p.cheque, (v) => p.cheque = v)),
+                      subBox(c, _sw('طلب و بدهی اشخاص', 'هشدار سررسید حساب‌های تسویه‌نشده', p.acc, (v) => p.acc = v)),
                     ]),
-                    const SizedBox(height: 8),
-                    _sw('اقساط وام', 'هشدار سررسید قسط‌های پرداخت‌نشده', p.loan, (v) => p.loan = v),
-                    _sw('چک‌ها', 'هشدار سررسید چک‌های در انتظار', p.cheque, (v) => p.cheque = v),
-                    _sw('طلب و بدهی اشخاص', 'هشدار سررسید حساب‌های تسویه‌نشده', p.acc, (v) => p.acc = v),
-                    const Divider(),
-                    const Text('زمان هشدار', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 6),
-                    Wrap(spacing: 8, children: [
-                      for (final d in const [0, 1, 3, 7, 14])
-                        ChoiceChip(
-                            label: Text(d == 0 ? 'همان روز سررسید' : '${faDigits('$d')} روز قبل'),
-                            selected: p.lead == d,
-                            onSelected: (_) {
-                              p.lead = d;
-                              p.save();
-                            }),
+                    mainCard(c, Icons.schedule_outlined, 'زمان هشدار و تعویق', [
+                      subBox(
+                          c,
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            const Text('زمان هشدار', style: TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            Wrap(spacing: 8, children: [
+                              for (final d in const [0, 1, 3, 7, 14])
+                                ChoiceChip(
+                                    label: Text(d == 0 ? 'همان روز سررسید' : '${faDigits('$d')} روز قبل'),
+                                    selected: p.lead == d,
+                                    onSelected: (_) {
+                                      p.lead = d;
+                                      p.save();
+                                    }),
+                            ]),
+                            const Text('سررسیدهای گذشته‌ی انجام‌نشده همیشه هشدار داده می‌شوند.',
+                                style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          ]),
+                          pad: const EdgeInsets.all(12)),
+                      subBox(
+                          c,
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            const Text('تعویق پیش‌فرض دکمهٔ اعلان', style: TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            Wrap(spacing: 8, children: [
+                              for (final m in const [10, 30, 60, 180, 1440])
+                                ChoiceChip(
+                                    label: Text(durLabel(m)),
+                                    selected: p.snoozeMin == m,
+                                    onSelected: (_) {
+                                      p.snoozeMin = m;
+                                      p.save();
+                                    }),
+                            ]),
+                          ]),
+                          pad: const EdgeInsets.all(12)),
                     ]),
-                    const Text('سررسیدهای گذشته‌ی انجام‌نشده همیشه هشدار داده می‌شوند.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    const Divider(),
-                    const Text('صدای اعلان', style: TextStyle(fontWeight: FontWeight.bold)),
-                    for (var i = 0; i < soundNames.length; i++)
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        leading: Icon(p.sound == i ? Icons.radio_button_checked : Icons.radio_button_unchecked),
-                        title: Text(soundNames[i]),
-                        trailing: IconButton(
-                            tooltip: 'پخش آزمایشی',
-                            icon: const Icon(Icons.play_circle_outline),
-                            onPressed: () => DueAlerts.preview(i)),
-                        onTap: () {
-                          p.sound = i;
-                          p.save();
-                        },
-                      ),
-                    const Divider(),
-                    const Text('تعویق پیش‌فرض دکمهٔ اعلان', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 6),
-                    Wrap(spacing: 8, children: [
-                      for (final m in const [10, 30, 60, 180, 1440])
-                        ChoiceChip(
-                            label: Text(durLabel(m)),
-                            selected: p.snoozeMin == m,
-                            onSelected: (_) {
-                              p.snoozeMin = m;
-                              p.save();
-                            }),
+                    mainCard(c, Icons.music_note_outlined, 'صدای اعلان', [
+                      subBox(
+                          c,
+                          Column(children: [
+                            for (var i = 0; i < soundNames.length; i++)
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                leading: Icon(p.sound == i ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                                title: Text(soundNames[i]),
+                                trailing: IconButton(
+                                    tooltip: 'پخش آزمایشی',
+                                    icon: const Icon(Icons.play_circle_outline),
+                                    onPressed: () => DueAlerts.preview(i)),
+                                onTap: () {
+                                  p.sound = i;
+                                  p.save();
+                                },
+                              ),
+                          ])),
+                      subTile(c, Icons.verified_user_outlined, 'بررسی / درخواست مجوز اعلان', () async {
+                        final ok = await DueAlerts.ensurePermission();
+                        if (c.mounted) toast(c, ok ? 'مجوز اعلان فعال است' : 'مجوز اعلان داده نشد؛ از تنظیمات گوشی فعال کنید');
+                      }),
                     ]),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                        onPressed: () async {
-                          final ok = await DueAlerts.ensurePermission();
-                          if (c.mounted) toast(c, ok ? 'مجوز اعلان فعال است' : 'مجوز اعلان داده نشد؛ از تنظیمات گوشی فعال کنید');
-                        },
-                        icon: const Icon(Icons.verified_user_outlined),
-                        label: const Text('بررسی / درخواست مجوز اعلان')),
                   ]);
                 },
               );
@@ -1801,6 +1806,83 @@ jobs:
             );
           }
 
+          // ---------- کادرهای دو سطحی تنظیمات: اصلی (پررنگ) و زیرمجموعه (کم‌رنگ) ----------
+          Color mainFill(BuildContext c) {
+            final cs = Theme.of(c).colorScheme;
+            return Color.alphaBlend(cs.primary.withAlpha(46), cs.surfaceContainerHigh);
+          }
+
+          Color subFill(BuildContext c) {
+            final cs = Theme.of(c).colorScheme;
+            return Color.alphaBlend(cs.primary.withAlpha(12), cs.surfaceContainerLowest);
+          }
+
+          Widget subBox(BuildContext c, Widget child,
+              {VoidCallback? onTap, EdgeInsets pad = const EdgeInsets.symmetric(horizontal: 12, vertical: 8)}) {
+            return Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Material(
+                color: subFill(c),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: onTap,
+                  child: Padding(padding: pad, child: child),
+                ),
+              ),
+            );
+          }
+
+          Widget subTile(BuildContext c, IconData icon, String title, VoidCallback onTap,
+              {String? subtitle, Color? color}) {
+            return subBox(
+              c,
+              Row(children: [
+                Icon(icon, color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+                  if (subtitle != null) Text(subtitle, style: Theme.of(c).textTheme.bodySmall),
+                ])),
+                Icon(Icons.chevron_left, color: color),
+              ]),
+              onTap: onTap,
+              pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            );
+          }
+
+          Widget mainCard(BuildContext c, IconData icon, String title, List<Widget> children, {String? subtitle}) {
+            final cs = Theme.of(c).colorScheme;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Material(
+                color: mainFill(c),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(22),
+                    side: BorderSide(color: cs.primary.withAlpha(110), width: 1.2)),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: Row(children: [
+                        Icon(icon, color: cs.primary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(title,
+                              style: Theme.of(c).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                          if (subtitle != null) Text(subtitle, style: Theme.of(c).textTheme.bodySmall),
+                        ])),
+                      ]),
+                    ),
+                    ...children,
+                  ]),
+                ),
+              ),
+            );
+          }
           Widget sec(BuildContext c, String t) => Padding(
                 padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
                 child: Text(t,
@@ -2811,14 +2893,15 @@ jobs:
                       OutlinedButton(
                         onPressed: () => _notes(c, notes),
                         style: OutlinedButton.styleFrom(
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                          minimumSize: const Size(44, 40),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          padding: const EdgeInsets.all(6),
+                          minimumSize: const Size(34, 34),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           visualDensity: VisualDensity.compact,
                           side: BorderSide(color: cs.onSurfaceVariant, width: 1.5),
                         ),
                         child: Stack(clipBehavior: Clip.none, children: [
-                          const Icon(Icons.notifications_none_rounded, size: 22),
+                          const Icon(Icons.notifications_none_rounded, size: 20),
                           if (notes.isNotEmpty)
                             Positioned(
                                 top: -1,
@@ -8338,7 +8421,7 @@ jobs:
 
           Widget customLockCard(BuildContext c) => ValueListenableBuilder<String>(
                 valueListenable: customLock,
-                builder: (c, v, _) => card(
+                builder: (c, v, _) => subBox(
                   c,
                   Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('رمز یا الگوی دلخواه', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -9166,6 +9249,10 @@ jobs:
           class _BackupPageState extends State<BackupPage> {
             late Future<List<Map<String, dynamic>>> recs = _recs();
             bool busy = false, auto = false;
+            bool selecting = false, _held = false;
+            final Set<String> sel = {};
+            Timer? _hold;
+            List<Map<String, dynamic>> _cur = [];
 
             Future<List<Map<String, dynamic>>> _recs() async {
               final r = await sb.from('backup_records').select().order('created_at', ascending: false).limit(50);
@@ -9188,6 +9275,7 @@ jobs:
             @override
             void dispose() {
               calendarMode.removeListener(_onCal);
+              _hold?.cancel();
               super.dispose();
             }
 
@@ -9250,26 +9338,129 @@ jobs:
               if (mounted) setState(() => recs = _recs());
             }
 
+            void _toggle(String id) {
+              setState(() {
+                if (!sel.remove(id)) sel.add(id);
+                if (sel.isEmpty) selecting = false;
+              });
+            }
+
+            void _exitSelect() => setState(() {
+                  selecting = false;
+                  sel.clear();
+                });
+
+            Future<void> removeSelected() async {
+              final chosen = _cur.where((r) => sel.contains('${r['id']}')).toList();
+              if (chosen.isEmpty) return;
+              if (!await confirm(context, 'حذف نسخه‌های انتخاب‌شده',
+                  '${faDigits('${chosen.length}')} نسخهٔ پشتیبان برای همیشه حذف می‌شود.',
+                  ok: 'حذف')) return;
+              if (!mounted) return;
+              final ok = await run(context, () async {
+                await sb.storage.from('backups').remove(chosen.map((r) => r['storage_path'] as String).toList());
+                await sb.from('backup_records').delete().inFilter('id', chosen.map<Object>((r) => r['id'] as Object).toList());
+              }, reload: false);
+              if (!mounted) return;
+              setState(() {
+                if (ok) {
+                  sel.clear();
+                  selecting = false;
+                }
+                recs = _recs();
+              });
+              if (ok) toast(context, 'نسخه‌های انتخاب‌شده حذف شدند');
+            }
+
+            Widget _item(BuildContext c, Map<String, dynamic> r) {
+              final cs = Theme.of(c).colorScheme;
+              final tt = Theme.of(c).textTheme;
+              final id = '${r['id']}';
+              final picked = sel.contains(id);
+              final kb = ((r['file_size'] as num?) ?? 0) / 1024;
+              return Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (_) {
+                    _held = false;
+                    _hold?.cancel();
+                    if (selecting) return;
+                    _hold = Timer(const Duration(seconds: 2), () {
+                      if (!mounted) return;
+                      _held = true;
+                      HapticFeedback.mediumImpact();
+                      setState(() {
+                        selecting = true;
+                        sel.add(id);
+                      });
+                    });
+                  },
+                  onTapUp: (_) => _hold?.cancel(),
+                  onTapCancel: () => _hold?.cancel(),
+                  onTap: () {
+                    if (_held) {
+                      _held = false;
+                      return;
+                    }
+                    if (selecting) _toggle(id);
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: picked ? Color.alphaBlend(cs.primary.withAlpha(40), subFill(c)) : subFill(c),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: picked ? cs.primary : Colors.transparent, width: 2),
+                    ),
+                    child: Row(children: [
+                      if (selecting)
+                        Checkbox(value: picked, onChanged: (_) => _toggle(id))
+                      else
+                        const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.backup_outlined)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(fmtDate(DateTime.parse(r['created_at'] as String).toLocal()),
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text('${faDigits(kb.toStringAsFixed(1))} کیلوبایت', style: tt.bodySmall),
+                      ])),
+                      if (!selecting)
+                        PopupMenuButton<String>(
+                          onSelected: (v) => v == 'restore' ? restore(r) : remove(r),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'restore', child: Text('بازیابی')),
+                            PopupMenuItem(value: 'delete', child: Text('حذف')),
+                          ],
+                        ),
+                    ]),
+                  ),
+                ),
+              );
+            }
             @override
             Widget build(BuildContext context) {
               final tt = Theme.of(context).textTheme;
               return ListView(padding: EdgeInsets.fromLTRB(16, 16, 16, 100 + MediaQuery.paddingOf(context).bottom), children: [
                 Text('پشتیبان‌گیری و خروجی', style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
-                card(context, bgTile(context, 'backup')),
-                const SizedBox(height: 12),
-                card(
-                    context,
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('نسخهٔ ابری در فضای خصوصی شما ذخیره می‌شود و فقط خودتان به آن دسترسی دارید.'),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                          width: double.infinity,
-                          height: 50,
-                          child: FilledButton.icon(
-                              onPressed: busy ? null : create,
-                              icon: const Icon(Icons.cloud_upload_outlined),
-                              label: const Text('ایجاد نسخه پشتیبان ابری'))),
+                mainCard(context, Icons.cloud_upload_outlined, 'نسخهٔ پشتیبان ابری', [
+                  subBox(
+                      context,
+                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('نسخهٔ ابری در فضای خصوصی شما ذخیره می‌شود و فقط خودتان به آن دسترسی دارید.'),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: FilledButton.icon(
+                                onPressed: busy ? null : create,
+                                icon: const Icon(Icons.cloud_upload_outlined),
+                                label: const Text('ایجاد نسخه پشتیبان ابری'))),
+                      ]),
+                      pad: const EdgeInsets.all(12)),
+                  subBox(
+                      context,
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('پشتیبان خودکار روزانه'),
@@ -9280,68 +9471,86 @@ jobs:
                           await p.setBool('auto_backup', v);
                           setState(() => auto = v);
                         },
-                      ),
-                    ])),
-                card(
-                    context,
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('خروجی قابل حمل (رمزگذاری‌نشده است؛ با احتیاط به اشتراک بگذارید)'),
-                      const SizedBox(height: 8),
-                      Wrap(spacing: 8, children: [
-                        OutlinedButton.icon(
-                            onPressed: busy
-                                ? null
-                                : () async {
-                                    await run(context, () async {
-                                      final snap = await snapshot();
-                                      await shareFile('hesabyar_backup.json', jsonEncode(snap), 'application/json');
-                                    }, reload: false);
-                                  },
-                            icon: const Icon(Icons.data_object),
-                            label: const Text('JSON')),
-                        OutlinedButton.icon(
-                            onPressed: busy
-                                ? null
-                                : () => run(context, () => shareFile('hesabyar_report.csv', buildCsv(), 'text/csv'), reload: false),
-                            icon: const Icon(Icons.table_chart_outlined),
-                            label: const Text('CSV (اکسل)')),
+                      )),
+                ]),
+                mainCard(context, Icons.ios_share_outlined, 'خروجی قابل حمل', [
+                  subBox(
+                      context,
+                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('خروجی رمزگذاری‌نشده است؛ با احتیاط به اشتراک بگذارید.'),
+                        const SizedBox(height: 8),
+                        Wrap(spacing: 8, children: [
+                          OutlinedButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () async {
+                                      await run(context, () async {
+                                        final snap = await snapshot();
+                                        await shareFile('hesabyar_backup.json', jsonEncode(snap), 'application/json');
+                                      }, reload: false);
+                                    },
+                              icon: const Icon(Icons.data_object),
+                              label: const Text('JSON')),
+                          OutlinedButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () => run(context, () => shareFile('hesabyar_report.csv', buildCsv(), 'text/csv'), reload: false),
+                              icon: const Icon(Icons.table_chart_outlined),
+                              label: const Text('CSV (اکسل)')),
+                        ]),
                       ]),
-                    ])),
+                      pad: const EdgeInsets.all(12)),
+                ]),
+                mainCard(context, Icons.palette_outlined, 'ظاهر صفحه', [
+                  subBox(context, bgTile(context, 'backup')),
+                ]),
                 if (busy) const LinearProgressIndicator(),
-                sec(context, 'نسخه‌های ابری'),
                 FutureBuilder<List<Map<String, dynamic>>>(
                   future: recs,
                   builder: (c, s) {
+                    final List<Widget> kids;
                     if (s.connectionState != ConnectionState.done) {
-                      return const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()));
+                      kids = [const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))];
+                    } else if (s.hasError) {
+                      kids = [emptyBox('دریافت فهرست نسخه‌ها ممکن نشد (اتصال را بررسی کنید)')];
+                    } else {
+                      final list = s.data ?? [];
+                      _cur = list;
+                      if (list.isEmpty) {
+                        kids = [emptyBox('هنوز نسخه پشتیبانی ساخته نشده است')];
+                      } else {
+                        final allOn = list.every((r) => sel.contains('${r['id']}'));
+                        kids = [
+                          if (selecting)
+                            subBox(
+                                c,
+                                Row(children: [
+                                  Checkbox(
+                                      value: allOn,
+                                      onChanged: (v) => setState(() {
+                                            sel.clear();
+                                            if (v == true) sel.addAll(list.map((r) => '${r['id']}'));
+                                            if (sel.isEmpty) selecting = false;
+                                          })),
+                                  Expanded(
+                                      child: Text('${faDigits('${sel.length}')} مورد انتخاب شد',
+                                          style: const TextStyle(fontWeight: FontWeight.bold))),
+                                  FilledButton.icon(
+                                      style: FilledButton.styleFrom(backgroundColor: cPay),
+                                      onPressed: busy || sel.isEmpty ? null : removeSelected,
+                                      icon: const Icon(Icons.delete_outline),
+                                      label: const Text('حذف')),
+                                  IconButton(tooltip: 'لغو انتخاب', icon: const Icon(Icons.close), onPressed: _exitSelect),
+                                ]))
+                          else
+                            Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+                                child: Text('برای انتخاب و حذف چندتایی، ۲ ثانیه روی یک نسخه نگه دارید.', style: tt.bodySmall)),
+                          ...list.map((r) => _item(c, r)),
+                        ];
+                      }
                     }
-                    if (s.hasError) return emptyBox('دریافت فهرست نسخه‌ها ممکن نشد (اتصال را بررسی کنید)');
-                    final list = s.data ?? [];
-                    if (list.isEmpty) return emptyBox('هنوز نسخه پشتیبانی ساخته نشده است');
-                    return Column(
-                        children: list.map((r) {
-                      final kb = ((r['file_size'] as num?) ?? 0) / 1024;
-                      return card(
-                        c,
-                        Row(children: [
-                          const Icon(Icons.backup_outlined),
-                          const SizedBox(width: 12),
-                          Expanded(
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(fmtDate(DateTime.parse(r['created_at'] as String).toLocal()),
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text('${faDigits(kb.toStringAsFixed(1))} کیلوبایت', style: tt.bodySmall),
-                          ])),
-                          PopupMenuButton<String>(
-                            onSelected: (v) => v == 'restore' ? restore(r) : remove(r),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'restore', child: Text('بازیابی')),
-                              PopupMenuItem(value: 'delete', child: Text('حذف')),
-                            ],
-                          ),
-                        ]),
-                      );
-                    }).toList());
+                    return mainCard(c, Icons.history, 'نسخه‌های ابری', kids);
                   },
                 ),
               ]);
@@ -9519,39 +9728,43 @@ jobs:
                 body: ListenableBuilder(
                   listenable: Listenable.merge([appLockEnabled, lockDelay, customLock]),
                   builder: (c, _) => ListView(padding: const EdgeInsets.all(16), children: [
-                    card(
-                        c,
-                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('قفل ورود به برنامه', style: TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: const Text(
-                                'هنگام ورود، با رمز، الگو، اثر انگشت یا تشخیص چهره‌ای که روی گوشی خود تنظیم کرده‌اید، برنامه باز می‌شود.'),
-                            value: appLockEnabled.value,
-                            onChanged: busy ? null : _toggle,
-                          ),
-                          if (busy) const LinearProgressIndicator(),
-                        ])),
-                    customLockCard(c),
-                    if (appLockEnabled.value || customLock.value != 'none')
-                      card(
+                    mainCard(c, Icons.lock_outline, 'قفل ورود به برنامه', [
+                      subBox(
                           c,
                           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            const Text('زمان قفل خودکار', style: TextStyle(fontWeight: FontWeight.bold)),
-                            const Text('پس از خروج از برنامه، بعد از چه مدتی دوباره قفل شود.'),
-                            const SizedBox(height: 8),
-                            Wrap(spacing: 8, children: [
-                              for (final o in const [
-                                [0, 'بلافاصله'],
-                                [60, 'بعد از ۱ دقیقه'],
-                                [300, 'بعد از ۵ دقیقه'],
-                              ])
-                                ChoiceChip(
-                                    label: Text(o[1] as String),
-                                    selected: lockDelay.value == o[0],
-                                    onSelected: (_) => setLockDelay(o[0] as int)),
-                            ]),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('قفل ورود به برنامه', style: TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: const Text(
+                                  'هنگام ورود، با رمز، الگو، اثر انگشت یا تشخیص چهره‌ای که روی گوشی خود تنظیم کرده‌اید، برنامه باز می‌شود.'),
+                              value: appLockEnabled.value,
+                              onChanged: busy ? null : _toggle,
+                            ),
+                            if (busy) const LinearProgressIndicator(),
                           ])),
+                      customLockCard(c),
+                    ]),
+                    if (appLockEnabled.value || customLock.value != 'none')
+                      mainCard(c, Icons.timer_outlined, 'زمان قفل خودکار', [
+                        subBox(
+                            c,
+                            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              const Text('پس از خروج از برنامه، بعد از چه مدتی دوباره قفل شود.'),
+                              const SizedBox(height: 8),
+                              Wrap(spacing: 8, children: [
+                                for (final o in const [
+                                  [0, 'بلافاصله'],
+                                  [60, 'بعد از ۱ دقیقه'],
+                                  [300, 'بعد از ۵ دقیقه'],
+                                ])
+                                  ChoiceChip(
+                                      label: Text(o[1] as String),
+                                      selected: lockDelay.value == o[0],
+                                      onSelected: (_) => setLockDelay(o[0] as int)),
+                              ]),
+                            ]),
+                            pad: const EdgeInsets.all(12)),
+                      ]),
                   ]),
                 ),
               );
@@ -9592,135 +9805,131 @@ jobs:
                   return ListView(padding: EdgeInsets.fromLTRB(16, 16, 16, 100 + MediaQuery.paddingOf(c).bottom), children: [
                     Text('تنظیمات', style: Theme.of(c).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    card(c, bgTile(c, 'settings')),
-                    card(
-                        c,
-                        Row(children: [
-                          const CircleAvatar(child: Icon(Icons.person)),
-                          const SizedBox(width: 12),
-                          Expanded(
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(profileName.isEmpty ? 'بدون نام' : profileName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text(email, textDirection: TextDirection.ltr),
-                          ])),
-                          IconButton(
-                              icon: const Icon(Icons.edit_outlined),
-                              onPressed: () async {
-                                final n = await _ask(c, 'نام نمایشی', 'نام', init: profileName);
-                                if (n == null || !c.mounted) return;
-                                await run(c, () async {
-                                  await db.from('profiles').update({'display_name': n}).eq('user_id', uid());
-                                  profileName = n;
-                                }, reload: false);
-                                store.refreshUI();
-                              }),
-                        ])),
-                    card(
-                        c,
-                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          const Row(children: [
-                            Icon(Icons.payments_outlined),
-                            SizedBox(width: 8),
-                            Text('واحد پول', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ]),
-                          const SizedBox(height: 4),
-                          const Text('فقط واحد نمایش تغییر می‌کند و تبدیل ارز انجام نمی‌شود.'),
-                          const SizedBox(height: 8),
-                          Wrap(spacing: 8, children: [
-                            for (final u in ['تومان', 'ریال'])
-                              ChoiceChip(label: Text(u), selected: unit.value == u, onSelected: (_) => _setUnit(c, u)),
-                            ActionChip(
-                                label: Text(['تومان', 'ریال'].contains(unit.value) ? 'واحد دیگر…' : unit.value),
+                    // ۱) حساب کاربری
+                    mainCard(c, Icons.person_outline, 'حساب کاربری', [
+                      subBox(
+                          c,
+                          Row(children: [
+                            const CircleAvatar(child: Icon(Icons.person)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(profileName.isEmpty ? 'بدون نام' : profileName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text(email, textDirection: TextDirection.ltr),
+                            ])),
+                            IconButton(
+                                icon: const Icon(Icons.edit_outlined),
                                 onPressed: () async {
-                                  final u = await _ask(c, 'واحد پول دلخواه', 'مثلاً دلار');
-                                  if (u != null && u.isNotEmpty && c.mounted) await _setUnit(c, u);
+                                  final n = await _ask(c, 'نام نمایشی', 'نام', init: profileName);
+                                  if (n == null || !c.mounted) return;
+                                  await run(c, () async {
+                                    await db.from('profiles').update({'display_name': n}).eq('user_id', uid());
+                                    profileName = n;
+                                  }, reload: false);
+                                  store.refreshUI();
                                 }),
-                          ]),
-                          const Divider(height: 28),
-                          const Row(children: [
-                            Icon(Icons.calendar_month_outlined),
-                            SizedBox(width: 8),
-                            Text('تقویم پیش‌فرض', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ]),
-                          const SizedBox(height: 4),
-                          const Text('همهٔ تاریخ‌ها و انتخابگر تاریخ بر اساس این تقویم نمایش داده می‌شوند. داده‌ها همیشه به‌صورت میلادی ذخیره می‌شوند و با تغییر تقویم چیزی از بین نمی‌رود.'),
-                          const SizedBox(height: 8),
-                          Wrap(spacing: 8, children: [
-                            ChoiceChip(
-                                label: const Text('شمسی (هجری شمسی)'),
-                                selected: calendarMode.value == 'jalali',
-                                onSelected: (_) => setCalendar('jalali')),
-                            ChoiceChip(
-                                label: const Text('میلادی'),
-                                selected: calendarMode.value == 'gregorian',
-                                onSelected: (_) => setCalendar('gregorian')),
-                          ]),
-                          const SizedBox(height: 4),
-                          Text('امروز: ${fmtDate(DateTime.now())}'),
-                        ])),
-                    card(
-                        c,
-                        Row(children: [
-                          const Icon(Icons.security),
-                          const SizedBox(width: 12),
-                          Expanded(
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            const Text('امنیت', style: TextStyle(fontWeight: FontWeight.bold)),
-                            Text((appLockEnabled.value || customLock.value != 'none') ? 'قفل ورود فعال است' : 'قفل ورود غیرفعال است'),
                           ])),
-                          const Icon(Icons.chevron_left),
-                        ]),
-                        onTap: () => Navigator.push(c, FastRoute(builder: (_) => const SecurityPage()))),
-                    card(
-                        c,
-                        Column(children: [
-                          ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.lock_reset),
-                              title: const Text('تغییر رمز عبور'),
-                              onTap: () async {
-                                final p = await _ask(c, 'رمز عبور جدید', 'حداقل ۸ کاراکتر', pass: true);
-                                if (p == null || !c.mounted) return;
-                                if (p.length < 8) {
-                                  toast(c, 'رمز عبور باید حداقل ۸ کاراکتر باشد');
-                                  return;
-                                }
-                                final ok = await run(c, () async {
-                                  await sb.auth.updateUser(UserAttributes(password: p));
-                                }, reload: false);
-                                if (ok && c.mounted) toast(c, 'رمز عبور تغییر کرد');
-                              }),
-                          ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.logout),
-                              title: const Text('خروج از حساب'),
-                              onTap: () async {
-                                await store.clear();
-                                await doSignOut();
-                              }),
-                          ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.delete_forever, color: cPay),
-                              title: const Text('حذف حساب کاربری', style: TextStyle(color: cPay)),
-                              onTap: () async {
-                                final ok = await confirm(c, 'حذف حساب کاربری',
-                                    'همهٔ اشخاص، حساب‌ها، پرداخت‌ها و نسخه‌های پشتیبان شما برای همیشه حذف می‌شود و قابل بازگشت نیست.',
-                                    ok: 'حذف دائمی');
-                                if (!ok || !c.mounted) return;
-                                final done = await run(c, () async {
-                                  final r = await sb.from('backup_records').select('storage_path');
-                                  final paths = List<Map<String, dynamic>>.from(r).map((e) => e['storage_path'] as String).toList();
-                                  if (paths.isNotEmpty) await sb.storage.from('backups').remove(paths);
-                                  await sb.rpc('delete_my_account');
-                                }, reload: false);
-                                if (done) {
-                                  await store.clear();
-                                  try {
-                                    await doSignOut();
-                                  } catch (_) {}
-                                }
-                              }),
-                        ])),
+                      subTile(c, Icons.lock_reset, 'تغییر رمز عبور', () async {
+                        final p = await _ask(c, 'رمز عبور جدید', 'حداقل ۸ کاراکتر', pass: true);
+                        if (p == null || !c.mounted) return;
+                        if (p.length < 8) {
+                          toast(c, 'رمز عبور باید حداقل ۸ کاراکتر باشد');
+                          return;
+                        }
+                        final ok = await run(c, () async {
+                          await sb.auth.updateUser(UserAttributes(password: p));
+                        }, reload: false);
+                        if (ok && c.mounted) toast(c, 'رمز عبور تغییر کرد');
+                      }),
+                      subTile(c, Icons.logout, 'خروج از حساب', () async {
+                        await store.clear();
+                        await doSignOut();
+                      }),
+                      subTile(c, Icons.delete_forever, 'حذف حساب کاربری', () async {
+                        final ok = await confirm(c, 'حذف حساب کاربری',
+                            'همهٔ اشخاص، حساب‌ها، پرداخت‌ها و نسخه‌های پشتیبان شما برای همیشه حذف می‌شود و قابل بازگشت نیست.',
+                            ok: 'حذف دائمی');
+                        if (!ok || !c.mounted) return;
+                        final done = await run(c, () async {
+                          final r = await sb.from('backup_records').select('storage_path');
+                          final paths = List<Map<String, dynamic>>.from(r).map((e) => e['storage_path'] as String).toList();
+                          if (paths.isNotEmpty) await sb.storage.from('backups').remove(paths);
+                          await sb.rpc('delete_my_account');
+                        }, reload: false);
+                        if (done) {
+                          await store.clear();
+                          try {
+                            await doSignOut();
+                          } catch (_) {}
+                        }
+                      }, color: cPay),
+                    ]),
+                    // ۲) عمومی
+                    mainCard(c, Icons.tune_rounded, 'تنظیمات عمومی', [
+                      subBox(
+                          c,
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            const Row(children: [
+                              Icon(Icons.payments_outlined),
+                              SizedBox(width: 8),
+                              Text('واحد پول', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ]),
+                            const SizedBox(height: 4),
+                            const Text('فقط واحد نمایش تغییر می‌کند و تبدیل ارز انجام نمی‌شود.'),
+                            const SizedBox(height: 8),
+                            Wrap(spacing: 8, children: [
+                              for (final u in ['تومان', 'ریال'])
+                                ChoiceChip(label: Text(u), selected: unit.value == u, onSelected: (_) => _setUnit(c, u)),
+                              ActionChip(
+                                  label: Text(['تومان', 'ریال'].contains(unit.value) ? 'واحد دیگر…' : unit.value),
+                                  onPressed: () async {
+                                    final u = await _ask(c, 'واحد پول دلخواه', 'مثلاً دلار');
+                                    if (u != null && u.isNotEmpty && c.mounted) await _setUnit(c, u);
+                                  }),
+                            ]),
+                          ]),
+                          pad: const EdgeInsets.all(12)),
+                      subBox(
+                          c,
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            const Row(children: [
+                              Icon(Icons.calendar_month_outlined),
+                              SizedBox(width: 8),
+                              Text('تقویم پیش‌فرض', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ]),
+                            const SizedBox(height: 4),
+                            const Text('همهٔ تاریخ‌ها و انتخابگر تاریخ بر اساس این تقویم نمایش داده می‌شوند. داده‌ها همیشه به‌صورت میلادی ذخیره می‌شوند و با تغییر تقویم چیزی از بین نمی‌رود.'),
+                            const SizedBox(height: 8),
+                            Wrap(spacing: 8, children: [
+                              ChoiceChip(
+                                  label: const Text('شمسی (هجری شمسی)'),
+                                  selected: calendarMode.value == 'jalali',
+                                  onSelected: (_) => setCalendar('jalali')),
+                              ChoiceChip(
+                                  label: const Text('میلادی'),
+                                  selected: calendarMode.value == 'gregorian',
+                                  onSelected: (_) => setCalendar('gregorian')),
+                            ]),
+                            const SizedBox(height: 4),
+                            Text('امروز: ${fmtDate(DateTime.now())}'),
+                          ]),
+                          pad: const EdgeInsets.all(12)),
+                    ]),
+                    // ۳) ظاهر و چیدمان
+                    mainCard(c, Icons.palette_outlined, 'ظاهر و چیدمان', [
+                      subBox(c, bgTile(c, 'settings')),
+                      subTile(c, Icons.dashboard_customize_outlined, 'تنظیمات ظاهر صفحه خانه', () => showHomeStyleSheet(c)),
+                    ]),
+                    // ۴) هشدارها
+                    mainCard(c, Icons.notifications_active_outlined, 'اعلان و هشدار', [
+                      subBox(c, alertSettingsTile(c)),
+                    ]),
+                    // ۵) امنیت
+                    mainCard(c, Icons.security, 'امنیت', [
+                      subTile(c, Icons.lock_outline, 'قفل ورود و زمان قفل خودکار',
+                          () => Navigator.push(c, FastRoute(builder: (_) => const SecurityPage())),
+                          subtitle: (appLockEnabled.value || customLock.value != 'none') ? 'قفل ورود فعال است' : 'قفل ورود غیرفعال است'),
+                    ]),
                   ]);
                 },
               );
