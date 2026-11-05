@@ -2651,7 +2651,12 @@ jobs:
                               fit: BoxFit.scaleDown,
                               child: Text(_today(),
                                   maxLines: 1,
-                                  style: TextStyle(fontSize: 13 * dateS, fontWeight: FontWeight.bold))),
+                                  style: TextStyle(
+                                      fontSize: 13 * dateS,
+                                      fontWeight: FontWeight.bold,
+                                      color: uiStyles.of('home_toolbar').textColor != null
+                                          ? null
+                                          : cs.onSurfaceVariant))),
                         ),
                         scale: false),
                   ),
@@ -3024,9 +3029,8 @@ jobs:
                     topPad: 0,
                     headerTop: 0,
                     edge: true,
-                    bottomPad: 100 + MediaQuery.paddingOf(c).bottom,
                     fade: !uiStyles.of('home_contacts').glass,
-                    bottomPad: 0,
+                    bottomPad: MediaQuery.paddingOf(c).bottom,
                     header: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                         SizedBox(height: uiStyles.n('tb_top', 20)),
                         _toolbar(c, notes),
@@ -6320,6 +6324,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               final r = edge ? uiStyles.n('hdr_r', 16) : 0.0;
+              final sh = edge ? uiStyles.n('hdr_sh', 7) : 0.0;
               return LayoutBuilder(
                 builder: (c, bc) {
                   final list = RefreshIndicator(
@@ -6366,7 +6371,7 @@ jobs:
                                 top: -r,
                                 bottom: 0,
                                 child: IgnorePointer(
-                                    child: CustomPaint(painter: _HdrShadowPainter(r), size: Size.infinite)),
+                                    child: CustomPaint(painter: _HdrShadowPainter(r, sh), size: Size.infinite)),
                               ),
                             ]),
                     ),
@@ -6393,20 +6398,21 @@ jobs:
 
           /// سایهٔ نرم لبهٔ پایین هدر
           class _HdrShadowPainter extends CustomPainter {
-            final double r;
-            _HdrShadowPainter(this.r);
+            final double r, e;
+            _HdrShadowPainter(this.r, this.e);
             @override
             void paint(Canvas canvas, Size size) {
+              if (e <= 0) return;
               final shape = _hdrShape(size.width, r);
               canvas.save();
               canvas.clipPath(Path.combine(PathOperation.difference,
                   Path()..addRect(Offset.zero & size), shape));
-              canvas.drawShadow(shape, Colors.black.withValues(alpha: .85), 7, false);
+              canvas.drawShadow(shape, Colors.black.withValues(alpha: .85), e, false);
               canvas.restore();
             }
 
             @override
-            bool shouldRepaint(_HdrShadowPainter old) => old.r != r;
+            bool shouldRepaint(_HdrShadowPainter old) => old.r != r || old.e != e;
           }
 
           // ---------- ترتیب الفبایی فارسی ----------
@@ -6577,6 +6583,29 @@ jobs:
             Widget build(BuildContext context) => ListenableBuilder(
                   listenable: uiStyles,
                   builder: (c, _) => _nSlider(label, k, def, 0, max, icon: Icons.rounded_corner),
+                );
+          }
+
+          class HeaderEdgeEditor extends StatelessWidget {
+            const HeaderEdgeEditor({super.key});
+            @override
+            Widget build(BuildContext context) => ListenableBuilder(
+                  listenable: uiStyles,
+                  builder: (c, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text(
+                        'ناحیه‌ای که کادرهای اشخاص هنگام اسکرول زیر آن پنهان می‌شوند (زیر سه کادر بالا)',
+                        style: TextStyle(fontSize: 12)),
+                    _nSlider('قوی یا ملایم بودن سایه (۰ = بدون سایه)', 'hdr_sh', 7, 0, 20, icon: Icons.filter_drama),
+                    _nSlider('گردی لبه‌های پایین (۰ = صاف)', 'hdr_r', 16, 0, 40, icon: Icons.rounded_corner),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        onPressed: () => uiStyles.resetN('hdr_'),
+                        icon: const Icon(Icons.restart_alt),
+                        label: const Text('بازگشت به پیش‌فرض'),
+                      ),
+                    ),
+                  ]),
                 );
           }
 
@@ -7123,6 +7152,13 @@ jobs:
                       leading: Icon(Icons.animation),
                       title: Text('افکت', style: TextStyle(fontWeight: FontWeight.bold)),
                       children: [FxEditor()],
+                    ),
+                    const ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.only(bottom: 8),
+                      leading: Icon(Icons.vertical_align_bottom),
+                      title: Text('لبه و سایهٔ زیر کادرهای بالا', style: TextStyle(fontWeight: FontWeight.bold)),
+                      children: [HeaderEdgeEditor()],
                     ),
                     const ExpansionTile(
                       tilePadding: EdgeInsets.zero,
