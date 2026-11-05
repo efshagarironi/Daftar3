@@ -2413,22 +2413,8 @@ jobs:
             }
           }
 
-          Widget offlineBanner(BuildContext c) => store.offline
-              ? Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                      color: Theme.of(c).colorScheme.errorContainer,
-                      borderRadius: BorderRadius.circular(16)),
-                  child: Row(children: [
-                    const Icon(Icons.cloud_off),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: Text(
-                            'حالت آفلاین؛ می‌توانید داده‌ها را ببینید و ثبت کنید. تغییرات روی گوشی ذخیره می‌شود و با اتصال به اینترنت خودکار همگام می‌شود.${store.pending > 0 ? ' (${faDigits('${store.pending}')} تغییر در انتظار ارسال)' : ''}')),
-                  ]),
-                )
-              : const SizedBox.shrink();
+          /// هشدار آفلاین حذف شد؛ ذخیره روی گوشی و همگام‌سازی خودکار بی‌صدا در پس‌زمینه انجام می‌شود
+          Widget offlineBanner(BuildContext c) => const SizedBox.shrink();
 
           // ---------- dashboard ----------
           const _kBlue = Color(0xFF4A90E8);
@@ -2677,7 +2663,7 @@ jobs:
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           minimumSize: const Size(44, 40),
                           visualDensity: VisualDensity.compact,
-                          side: BorderSide(color: cs.outlineVariant, width: 1.5),
+                          side: BorderSide(color: cs.onSurfaceVariant, width: 1.5),
                         ),
                         child: Stack(clipBehavior: Clip.none, children: [
                           const Icon(Icons.notifications_none_rounded, size: 22),
@@ -2729,7 +2715,7 @@ jobs:
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                     visualDensity: VisualDensity.compact,
-                    side: BorderSide(color: Theme.of(c).colorScheme.outlineVariant, width: 1.5),
+                    side: BorderSide(color: Theme.of(c).colorScheme.onSurfaceVariant, width: 1.5),
                   ),
                 );
 
@@ -2816,7 +2802,7 @@ jobs:
                   ),
                 ),
               ),
-              radius: 26,
+              radius: uiStyles.n('rad_home_hero', 26),
               center: true,
               pad: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               colors: base == null ? const [_kBlue, _kNavy] : [base, _darken(base)],
@@ -2828,7 +2814,7 @@ jobs:
             final on = fs.border;
             final lineCol = (fs.bc != null ? Color(fs.bc!) : Theme.of(c).colorScheme.primary).withValues(alpha: fs.bo);
             return CustomPaint(
-              painter: on ? _ThreeSidePainter(lineCol, fs.bw, 26) : null,
+              painter: on ? _ThreeSidePainter(lineCol, fs.bw, uiStyles.n('rad_home_pframe', 26)) : null,
               child: Container(
                 constraints: BoxConstraints(minHeight: MediaQuery.of(c).size.height * .5),
                 padding: EdgeInsets.fromLTRB(on ? 10 + fs.bw : 0, on ? 14 + fs.bw : 0, on ? 10 + fs.bw : 0, 100),
@@ -2849,7 +2835,7 @@ jobs:
                   child: Text(t, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: tc)),
                 ),
                 onTap: f,
-                radius: 22,
+                radius: uiStyles.n('rad_home_$k', 22),
                 center: true,
                 pad: const EdgeInsets.symmetric(horizontal: 8),
               );
@@ -3034,10 +3020,11 @@ jobs:
                     lockList: selecting,
                     controller: _ctl,
                     topPad: 0,
+                    headerTop: 0,
                     fade: !uiStyles.of('home_contacts').glass,
                     bottomPad: 0,
                     header: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        SizedBox(height: uiStyles.n('tb_top', 12)),
+                        SizedBox(height: uiStyles.n('tb_top', 20)),
                         _toolbar(c, notes),
                         _canvas(c, rec, pay, net),
                         offlineBanner(c),
@@ -3239,7 +3226,7 @@ jobs:
                   ]),
                 ),
                 onTap: f,
-                radius: u * .22,
+                radius: uiStyles.n('rad_home_contacts', -1) >= 0 ? uiStyles.n('rad_home_contacts', -1) : u * .22,
                 pad: EdgeInsets.all(u * .08),
                 blur: false,
               );
@@ -5722,7 +5709,10 @@ jobs:
               // بدون BackdropFilter: پشت کارت‌ها فقط گرادیان ملایم است و محو کردن ظاهر را عوض نمی‌کند،
               // ولی برای هر ردیف لیست لگ سنگین می‌سازد
               child: styledBox(c, s, Theme.of(c).colorScheme.surfaceContainerLow, child,
-                  onTap: onTap, blur: false, pad: EdgeInsets.symmetric(horizontal: 16, vertical: vp)),
+                  onTap: onTap,
+                  blur: false,
+                  radius: uiStyles.n('rad_$key', 20),
+                  pad: EdgeInsets.symmetric(horizontal: 16, vertical: vp)),
             );
           }
 
@@ -6304,6 +6294,7 @@ jobs:
             final bool lockList;
             final ScrollController? controller;
             final double topPad;
+            final double headerTop;
             final double bottomPad;
             const FixedHeaderList(
                 {super.key,
@@ -6317,6 +6308,7 @@ jobs:
                 this.lockList = false,
                 this.controller,
                 this.topPad = kFadeH,
+                this.headerTop = 8,
                 this.bottomPad = 100});
 
             @override
@@ -6327,7 +6319,7 @@ jobs:
                     constraints: BoxConstraints(maxHeight: bc.maxHeight * .6),
                     child: SingleChildScrollView(
                       physics: lockHeader ? const NeverScrollableScrollPhysics() : const ClampingScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      padding: EdgeInsets.fromLTRB(16, headerTop, 16, 0),
                       child: header,
                     ),
                   ),
@@ -6514,6 +6506,18 @@ jobs:
                 ],
               );
 
+          class RadiusEditor extends StatelessWidget {
+            final String k;
+            final double def, max;
+            final String label;
+            const RadiusEditor(this.k, {super.key, this.def = 20, this.max = 50, this.label = 'گردی لبه‌های کادر'});
+            @override
+            Widget build(BuildContext context) => ListenableBuilder(
+                  listenable: uiStyles,
+                  builder: (c, _) => _nSlider(label, k, def, 0, max, icon: Icons.rounded_corner),
+                );
+          }
+
           class ToolbarEditor extends StatelessWidget {
             const ToolbarEditor({super.key});
 
@@ -6524,7 +6528,7 @@ jobs:
                 builder: (c, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const StyleEditor('home_toolbar', glass: true, border: true, textSize: false, opMin: 0),
                   _nSlider('گردی لبه‌های کادر', 'tb_radius', 18, 0, 40, icon: Icons.rounded_corner),
-                  _nSlider('فاصله از بالا (زیر دوربین)', 'tb_top', 12, 0, 60, icon: Icons.vertical_align_top),
+                  _nSlider('فاصله از بالا (۰ = درست زیر دوربین)', 'tb_top', 20, 0, 60, icon: Icons.vertical_align_top),
                   const Divider(),
                   const Text('اندازه و جای عناصر داخل نوار ابزار',
                       style: TextStyle(fontWeight: FontWeight.bold)),
@@ -7105,6 +7109,15 @@ jobs:
                         title: Text(names[k]!, style: const TextStyle(fontWeight: FontWeight.bold)),
                         children: [
                           if (k != 'contacts') RectEditor(k),
+                          if (k == 'hero') const RadiusEditor('rad_home_hero', def: 26),
+                          if (k == 'loans') const RadiusEditor('rad_home_loans', def: 22),
+                          if (k == 'cheques') const RadiusEditor('rad_home_cheques', def: 22),
+                          if (k == 'contacts')
+                            const RadiusEditor('rad_home_contacts',
+                                def: 20, label: 'گردی لبه‌های کادر هر شخص'),
+                          if (k == 'contacts')
+                            const RadiusEditor('rad_home_pframe',
+                                def: 26, label: 'گردی لبه‌های قاب کل اشخاص'),
                           if (k == 'contacts') const SquareEditor(),
                           if (k == 'contacts') const FrameEditor('home_pframe'),
                           StyleEditor('home_$k',
