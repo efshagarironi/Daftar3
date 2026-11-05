@@ -4452,6 +4452,208 @@ jobs:
             });
           }
 
+          // ---------- جابه‌جایی کل لیست (نگه‌داشتن ۲ ثانیه ← انتخاب ← کشیدن به بالا/پایین) ----------
+          class ListBlock {
+            final String key;
+            final double base;
+            const ListBlock(this.key, {this.base = 18});
+            double get dy => uiStyles.rect(key)[1];
+            double get spacer => math.max(0.0, base + dy);
+
+            void move(DragUpdateDetails d) {
+              final ny = (dy + d.delta.dy).clamp(-base, 700.0).toDouble();
+              uiStyles.setRect(key, [0, ny, 1, 0], save: false);
+            }
+
+            Future<void> save() => uiStyles.flush();
+            Future<void> reset() => uiStyles.setRect(key, [0, 0, 1, 0]);
+
+            Widget spacerBox(bool selecting) => selecting
+                ? GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragUpdate: move,
+                    onVerticalDragEnd: (_) => save(),
+                    child: SizedBox(height: spacer))
+                : SizedBox(height: spacer);
+
+            Widget tail(bool selecting) => selecting
+                ? GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragUpdate: move,
+                    onVerticalDragEnd: (_) => save(),
+                    child: const SizedBox(height: 360))
+                : const SizedBox.shrink();
+
+            /// هر ردیف لیست: حالت عادی = نگه‌داشتن ۲ ثانیه برای انتخاب؛ حالت انتخاب = کشیدن، کل لیست را جابه‌جا می‌کند
+            Widget wrap(BuildContext c, bool selecting, VoidCallback onHold, Widget child) {
+              if (!selecting) return HoldDetector(onHold: onHold, child: child);
+              final pc = Theme.of(c).colorScheme.primary;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: move,
+                onVerticalDragEnd: (_) => save(),
+                child: Stack(children: [
+                  AbsorbPointer(child: child),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 12,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            color: pc.withValues(alpha: .06),
+                            border: Border.all(color: pc, width: 2.5)),
+                      ),
+                    ),
+                  ),
+                ]),
+              );
+            }
+          }
+
+          Widget blockBar(BuildContext c, ListBlock b, String what, VoidCallback onDone) => SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: Material(
+                    elevation: 6,
+                    borderRadius: BorderRadius.circular(20),
+                    color: Theme.of(c).colorScheme.surfaceContainerHigh,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('$what انتخاب شد', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        const Text('کل کادر را به بالا یا پایین بکشید و در جای دلخواه رها کنید. با «ثابت کردن» جای آن ذخیره می‌ماند.',
+                            style: TextStyle(fontSize: 12)),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          FilledButton.icon(onPressed: onDone, icon: const Icon(Icons.check), label: const Text('ثابت کردن')),
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                              onPressed: () => b.reset(), icon: const Icon(Icons.restart_alt), label: const Text('بازنشانی جا')),
+                        ]),
+                      ]),
+                    ),
+                  ),
+                ),
+              );
+
+          Widget _sumLine(String label, String value, Color col) => Row(children: [
+                Text(label, style: const TextStyle(fontSize: 12)),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(value, style: TextStyle(color: col, fontWeight: FontWeight.bold))))),
+              ]);
+
+          /// اقساط پرداخت‌نشده‌ای که سررسیدشان گذشته (قدیمی‌ترین اول)
+          List<MapEntry<Loan, Map<String, dynamic>>> overdueInstallments() {
+            final t = _today0();
+            final out = <MapEntry<Loan, Map<String, dynamic>>>[];
+            for (final l in store.loans) {
+              for (final i in l.inst) {
+                if (Loan.isPaid(i)) continue;
+                final d = Loan.dueOf(i);
+                if (d != null && d.isBefore(t)) out.add(MapEntry(l, i));
+              }
+            }
+            out.sort((a, b) => '${a.value['due_at']}'.compareTo('${b.value['due_at']}'));
+            return out;
+          }
+
+          // ---------- صفحهٔ معوقات ----------
+          class LoanOverduePage extends StatelessWidget {
+            const LoanOverduePage({super.key});
+
+            @override
+            Widget build(BuildContext context) =>
+                GlassFrame(keys: const ['loan_top', 'loan_card'], bgKey: 'loans', child: _scaffold(context));
+
+            Widget _scaffold(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(title: const Text('معوقات')),
+                body: SafeArea(
+                  child: ListenableBuilder(
+                    listenable: Listenable.merge([store, unit, calendarMode, uiStyles]),
+                    builder: (c, _) {
+                      final rows = overdueInstallments();
+                      final sum = rows.fold<int>(0, (s, e) => s + Loan.amt(e.value));
+                      return FixedHeaderList(
+                        onRefresh: store.load,
+                        fade: !uiStyles.of('loan_card').glass,
+                        bottomPad: 24,
+                        header: Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: topBox(
+                              c,
+                              'loan_top',
+                              cPay,
+                              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                                _sumLine('تعداد اقساط معوق', faDigits('${rows.length}'), cPay),
+                                const SizedBox(height: 8),
+                                _sumLine('مبلغ کل معوقات', money(sum), cPay),
+                              ])),
+                        ),
+                        itemCount: rows.isEmpty ? 1 : rows.length + 1,
+                        itemBuilder: (cx, idx) {
+                          if (rows.isEmpty) return emptyBox('قسط معوقی ندارید ✨');
+                          if (idx == rows.length) {
+                            return const Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: Text('برای ثبت پرداخت هر قسط، روی کادر آن بزنید.',
+                                  textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 12)),
+                            );
+                          }
+                          return _tile(cx, rows[idx].key, rows[idx].value);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              );
+            }
+
+            Widget _tile(BuildContext c, Loan l, Map<String, dynamic> i) {
+              final d = Loan.dueOf(i);
+              return cardBox(
+                c,
+                'loan_card',
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(color: cPay.withValues(alpha: .15), borderRadius: BorderRadius.circular(14)),
+                        child: const Icon(Icons.event_busy, color: cPay)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(l.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text('قسط ${faDigits('${i['number']}')} از ${faDigits('${l.count}')}',
+                          style: Theme.of(c).textTheme.bodySmall),
+                    ])),
+                    badge('معوق', cPay),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Text(d == null ? '' : 'معوق از: ${fmtDate(d)}', style: const TextStyle(color: cPay, fontSize: 12)),
+                    const Spacer(),
+                    Text(money(Loan.amt(i)), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ]),
+                ]),
+                onTap: () => toggleInstallment(c, i),
+              );
+            }
+          }
+
           // ---------- صفحهٔ وام‌ها ----------
           class LoansPage extends StatefulWidget {
             const LoansPage({super.key});
@@ -4461,6 +4663,25 @@ jobs:
 
           class _LoansPageState extends State<LoansPage> {
             String tab = 'loans', q = '';
+            
+            bool selecting = false;
+            DateTime? _selAt;
+            static const _lb = ListBlock('loans_list');
+            bool get _recent => _selAt != null && DateTime.now().difference(_selAt!).inMilliseconds < 900;
+            
+            void _enterSelect() {
+              if (selecting || layoutEditing.value) return;
+              HapticFeedback.mediumImpact();
+              setState(() {
+                selecting = true;
+                _selAt = DateTime.now();
+              });
+            }
+            
+            void _doneSelect() => setState(() {
+                  selecting = false;
+                  _selAt = DateTime.now();
+                });
 
             bool _match(Loan l) {
               if (q.isEmpty) return true;
@@ -4497,7 +4718,8 @@ jobs:
                         layoutKey: 'loans'),
                   ),
                 ]),
-                floatingActionButton: FloatingActionButton.extended(
+                bottomNavigationBar: selecting ? blockBar(context, _lb, 'کادر وام‌ها', _doneSelect) : null,
+                floatingActionButton: selecting ? null : FloatingActionButton.extended(
                   onPressed: () => Navigator.push(
                       context, FastRoute(builder: (_) => const LoanFormPage())),
                   icon: const Icon(Icons.add),
@@ -4511,7 +4733,8 @@ jobs:
                     builder: (c, _) {
                       final loans = store.loans;
                       final taken = loans.where((l) => l.taken).fold<int>(0, (s, l) => s + l.remaining);
-                      final given = loans.where((l) => !l.taken).fold<int>(0, (s, l) => s + l.remaining);
+                      final od = overdueInstallments();
+                      final odSum = od.fold<int>(0, (s, e) => s + Loan.amt(e.value));
                       final shown = loans.where(_match).toList();
                       final rows = <MapEntry<Loan, Map<String, dynamic>>>[];
                       if (tab != 'loans') {
@@ -4529,12 +4752,14 @@ jobs:
                       final n = isLoans ? shown.length : rows.length;
                       return FixedHeaderList(
                           onRefresh: store.load,
-                          lockHeader: layoutEditing.value,
+                          lockHeader: layoutEditing.value || selecting,
+                          lockList: selecting,
+                          topPad: 0,
                           fade: !uiStyles.of('loan_card').glass,
-                          header: FreeCanvas(layoutKey: 'loans', rows: [
+                          header: IgnorePointer(ignoring: selecting, child: FreeCanvas(layoutKey: 'loans', rows: [
                               [
-                                CanvasItem('s1', _sumCard(c, 'مانده وام‌های من', taken, cPay)),
-                                CanvasItem('s2', _sumCard(c, 'مانده وام‌های داده‌شده', given, cRec)),
+                                CanvasItem('s1', _countCard(c, loans.length, taken)),
+                                CanvasItem('s2', _overdueCard(c, od.length, odSum)),
                               ],
                               [
                                 CanvasItem(
@@ -4547,14 +4772,16 @@ jobs:
                                       onChanged: (v) => setState(() => tab = v),
                                     )),
                               ],
-                            ]),
+                            ])),
                           // ساخت تنبل: فقط ردیف‌های قابل‌مشاهده ساخته می‌شوند
-                          itemCount: emptyMsg != null ? 1 : n,
+                          itemCount: (emptyMsg != null ? 1 : n) + 2,
                           itemBuilder: (cx, idx) {
+                            if (idx == 0) return _lb.spacerBox(selecting);
+                            if (idx == (emptyMsg != null ? 1 : n) + 1) return _lb.tail(selecting);
                             if (emptyMsg != null) return emptyBox(emptyMsg);
-                            if (isLoans) return _loanTile(cx, shown[idx]);
-                            final e = rows[idx];
-                            return _instTile(cx, e.key, e.value);
+                            final k = idx - 1;
+                            final Widget t = isLoans ? _loanTile(cx, shown[k]) : _instTile(cx, rows[k].key, rows[k].value);
+                            return _lb.wrap(cx, selecting, _enterSelect, t);
                           },
                       );
                     },
@@ -4564,16 +4791,29 @@ jobs:
               );
             }
 
-            Widget _sumCard(BuildContext c, String t, int v, Color col) =>
-                topBox(
-                    c,
-                    'loan_top',
-                    col,
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(t, style: const TextStyle(fontSize: 12)),
-                      const SizedBox(height: 6),
-                      Text(money(v), style: TextStyle(color: col, fontWeight: FontWeight.bold)),
-                    ]));
+            Widget _countCard(BuildContext c, int n, int debt) => topBox(
+                c,
+                'loan_top',
+                cPay,
+                Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  _sumLine('تعداد وام', faDigits('$n'), cPay),
+                  const SizedBox(height: 8),
+                  _sumLine('مانده وام‌ها', money(debt), cPay),
+                ]));
+
+            Widget _overdueCard(BuildContext c, int n, int sum) => topBox(
+                c,
+                'loan_top',
+                cRec,
+                Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  _sumLine('معوقات', '${faDigits('$n')} قسط', cRec),
+                  const SizedBox(height: 8),
+                  _sumLine('مبلغ کل معوق', money(sum), cRec),
+                ]),
+                onTap: () {
+                  if (selecting || _recent || layoutEditing.value) return;
+                  Navigator.push(c, FastRoute(builder: (_) => const LoanOverduePage()));
+                });
 
             Widget _loanTile(BuildContext c, Loan l) {
               final col = l.done ? cRec : (l.overdue ? cPay : cLoan);
@@ -4616,8 +4856,10 @@ jobs:
                         style: TextStyle(color: l.overdue ? cPay : null)),
                   ],
                 ]),
-                onTap: () => Navigator.push(
-                    c, FastRoute(builder: (_) => LoanDetailPage(l.id))),
+                onTap: () {
+                  if (selecting || _recent) return;
+                  Navigator.push(c, FastRoute(builder: (_) => LoanDetailPage(l.id)));
+                },
               );
             }
 
@@ -4644,7 +4886,10 @@ jobs:
                       icon: const Icon(Icons.check_circle_outline),
                       onPressed: () => toggleInstallment(c, i)),
                 ]),
-                onTap: () => Navigator.push(c, FastRoute(builder: (_) => LoanDetailPage(l.id))),
+                onTap: () {
+                  if (selecting || _recent) return;
+                  Navigator.push(c, FastRoute(builder: (_) => LoanDetailPage(l.id)));
+                },
               );
             }
           }
@@ -4668,6 +4913,25 @@ jobs:
 
           class _LoanDetailBodyState extends State<_LoanDetailBody> {
             String tab = 'all';
+            
+            bool selecting = false;
+            DateTime? _selAt;
+            static const _lb = ListBlock('loand_list');
+            bool get _recent => _selAt != null && DateTime.now().difference(_selAt!).inMilliseconds < 900;
+            
+            void _enterSelect() {
+              if (selecting || layoutEditing.value) return;
+              HapticFeedback.mediumImpact();
+              setState(() {
+                selecting = true;
+                _selAt = DateTime.now();
+              });
+            }
+            
+            void _doneSelect() => setState(() {
+                  selecting = false;
+                  _selAt = DateTime.now();
+                });
 
             @override
             Widget build(BuildContext context) {
@@ -4701,22 +4965,29 @@ jobs:
                         StyleGroup('loand_card', 'کادر اقساط', compress: true),
                       ], shared: true, bgKey: 'loand'),
                     ]),
+                    bottomNavigationBar: selecting ? blockBar(c, _lb, 'کادر اقساط', _doneSelect) : null,
                     body: FixedHeaderList(
                       onRefresh: store.load,
+                      lockHeader: layoutEditing.value || selecting,
+                      lockList: selecting,
+                      topPad: 0,
                       fade: !uiStyles.of('loand_card').glass,
                       bottomPad: 24,
-                      header: Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: StyledSegments(
+                      header: IgnorePointer(
+                        ignoring: selecting,
+                        child: FreeCanvas(layoutKey: 'loand', rows: [[CanvasItem('tabs', StyledSegments(
                           styleKey: 'loand_top',
                           values: const ['all', 'paid', 'unpaid'],
                           labels: const ['همه', 'پرداخت‌شده', 'پرداخت‌نشده'],
                           selected: tab,
                           onChanged: (v) => setState(() => tab = v),
-                        ),
+                        ))]]),
                       ),
-                      itemCount: shownInst.isEmpty ? 2 : shownInst.length + 1,
-                      itemBuilder: (c, idx) {
+                      itemCount: (shownInst.isEmpty ? 2 : shownInst.length + 1) + 2,
+                      itemBuilder: (c, idx0) {
+                      if (idx0 == 0) return _lb.spacerBox(selecting);
+                      if (idx0 == (shownInst.isEmpty ? 2 : shownInst.length + 1) + 1) return _lb.tail(selecting);
+                      final idx = idx0 - 1;
                         if (shownInst.isEmpty && idx == 0) {
                           return emptyBox(tab == 'paid' ? 'قسط پرداخت‌شده‌ای وجود ندارد' : 'قسط پرداخت‌نشده‌ای وجود ندارد');
                         }
@@ -4733,7 +5004,7 @@ jobs:
                         final d = Loan.dueOf(i);
                         final lateFlag = !paid && d != null && d.isBefore(_today0());
                         final ic = paid ? cRec : (lateFlag ? cPay : cWarn);
-                        return cardBox(
+                        return _lb.wrap(c, selecting, _enterSelect, cardBox(
                           c,
                           'loand_card',
                           Row(children: [
@@ -4755,8 +5026,11 @@ jobs:
                             badge(paid ? 'پرداخت‌شده' : (lateFlag ? 'معوق' : 'در انتظار'), ic),
                           ]),
                           vpad: 10,
-                          onTap: () => toggleInstallment(c, i),
-                        );
+                          onTap: () {
+                            if (selecting || _recent) return;
+                            toggleInstallment(c, i);
+                          },
+                        ));
                       },
                     ),
                   );
@@ -5012,6 +5286,25 @@ jobs:
 
           class _ChequesPageState extends State<ChequesPage> {
             String dir = 'received', kind = 'all', st = 'all', q = '';
+            
+            bool selecting = false;
+            DateTime? _selAt;
+            static const _lb = ListBlock('cheq_list');
+            bool get _recent => _selAt != null && DateTime.now().difference(_selAt!).inMilliseconds < 900;
+            
+            void _enterSelect() {
+              if (selecting || layoutEditing.value) return;
+              HapticFeedback.mediumImpact();
+              setState(() {
+                selecting = true;
+                _selAt = DateTime.now();
+              });
+            }
+            
+            void _doneSelect() => setState(() {
+                  selecting = false;
+                  _selAt = DateTime.now();
+                });
 
             bool _match(Cheque x) {
               if (q.isEmpty) return true;
@@ -5051,7 +5344,8 @@ jobs:
                         layoutKey: 'cheques'),
                   ),
                 ]),
-                floatingActionButton: FloatingActionButton.extended(
+                bottomNavigationBar: selecting ? blockBar(context, _lb, 'کادر چک‌های ثبت‌شده', _doneSelect) : null,
+                floatingActionButton: selecting ? null : FloatingActionButton.extended(
                   onPressed: () => Navigator.push(
                       context, FastRoute(builder: (_) => ChequeFormPage(initDir: dir))),
                   icon: const Icon(Icons.add),
@@ -5082,9 +5376,11 @@ jobs:
                           : ['pending', 'cashed', 'bounced', 'returned'];
                       return FixedHeaderList(
                           onRefresh: store.load,
-                          lockHeader: layoutEditing.value,
+                          lockHeader: layoutEditing.value || selecting,
+                          lockList: selecting,
+                          topPad: 0,
                           fade: !uiStyles.of('cheq_card').glass,
-                          header: FreeCanvas(layoutKey: 'cheques', rows: [
+                          header: IgnorePointer(ignoring: selecting, child: FreeCanvas(layoutKey: 'cheques', rows: [
                               [
                                 CanvasItem(
                                     'tabs',
@@ -5123,9 +5419,14 @@ jobs:
                                       ], joined: true),
                                     ])),
                               ],
-                            ]),
-                          itemCount: list.isEmpty ? 1 : list.length,
-                          itemBuilder: (c, i) => list.isEmpty ? emptyBox('چکی یافت نشد') : _tile(c, list[i]),
+                            ])),
+                          itemCount: (list.isEmpty ? 1 : list.length) + 2,
+                          itemBuilder: (c, i0) {
+                            if (i0 == 0) return _lb.spacerBox(selecting);
+                            if (i0 == (list.isEmpty ? 1 : list.length) + 1) return _lb.tail(selecting);
+                            if (list.isEmpty) return emptyBox('چکی یافت نشد');
+                            return _lb.wrap(c, selecting, _enterSelect, _tile(c, list[i0 - 1]));
+                          },
                       );
                     },
                   ),
@@ -5182,8 +5483,10 @@ jobs:
                     badge(x.overdue ? 'سررسید گذشته' : x.statusLabel, x.overdue ? cPay : col),
                   ]),
                 ]),
-                onTap: () =>
-                    Navigator.push(c, FastRoute(builder: (_) => ChequeDetailPage(x.id))),
+                onTap: () {
+                  if (selecting || _recent) return;
+                  Navigator.push(c, FastRoute(builder: (_) => ChequeDetailPage(x.id)));
+                },
               );
             }
           }
@@ -5672,6 +5975,9 @@ jobs:
                 case 'cheques':
                   return [0, 164, .48, 72];
                 case 'people':
+                case 'loans_list':
+                case 'loand_list':
+                case 'cheq_list':
                   return [0, 0, 1, 0];
                 default:
                   return [.52, 164, .48, 72];
@@ -5869,7 +6175,7 @@ jobs:
             );
           }
 
-          Widget topBox(BuildContext c, String key, Color col, Widget child) {
+          Widget topBox(BuildContext c, String key, Color col, Widget child, {VoidCallback? onTap}) {
             final s = uiStyles.of(key);
             final eff = BoxStyle(
                 color: s.color,
@@ -5881,7 +6187,7 @@ jobs:
                 bw: s.bw,
                 bc: s.bc,
                 bo: s.bo);
-            return styledBox(c, eff, col, child, radius: 18);
+            return styledBox(c, eff, col, child, radius: 18, onTap: onTap);
           }
 
           /// دور ویجت‌هایی مثل دکمه‌های انتخاب و چیپ‌ها، حالت شیشه‌ای می‌دهد
