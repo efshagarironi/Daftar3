@@ -2330,7 +2330,9 @@ jobs:
               return PageBg(
                 pageKey: const ['home', 'backup', 'settings'][i],
                 child: Scaffold(
+                extendBody: true,
                 body: SafeArea(
+                  bottom: false,
                   child: IndexedStack(index: i, children: const [
                     DashboardPage(),
                     BackupPage(),
@@ -3021,6 +3023,8 @@ jobs:
                     controller: _ctl,
                     topPad: 0,
                     headerTop: 0,
+                    edge: true,
+                    bottomPad: 100 + MediaQuery.paddingOf(c).bottom,
                     fade: !uiStyles.of('home_contacts').glass,
                     bottomPad: 0,
                     header: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -6295,6 +6299,7 @@ jobs:
             final ScrollController? controller;
             final double topPad;
             final double headerTop;
+            final bool edge; // لبه‌های پایین هدر گرد و سایه‌دار، و لیست زیر آن پنهان می‌شود
             final double bottomPad;
             const FixedHeaderList(
                 {super.key,
@@ -6309,42 +6314,99 @@ jobs:
                 this.controller,
                 this.topPad = kFadeH,
                 this.headerTop = 8,
+                this.edge = false,
                 this.bottomPad = 100});
 
             @override
             Widget build(BuildContext context) {
+              final r = edge ? uiStyles.n('hdr_r', 16) : 0.0;
               return LayoutBuilder(
-                builder: (c, bc) => Column(children: [
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: bc.maxHeight * .6),
-                    child: SingleChildScrollView(
-                      physics: lockHeader ? const NeverScrollableScrollPhysics() : const ClampingScrollPhysics(),
-                      padding: EdgeInsets.fromLTRB(16, headerTop, 16, 0),
-                      child: header,
-                    ),
-                  ),
-                  Expanded(
-                    child: RefreshIndicator(
-                      onRefresh: onRefresh,
-                      child: FadeTop(
-                        fade: fade,
-                        child: ListView.builder(
-                          controller: controller,
-                          physics: lockList
-                              ? const NeverScrollableScrollPhysics()
-                              : const AlwaysScrollableScrollPhysics(),
-                          cacheExtent: 600,
-                          padding: EdgeInsets.fromLTRB(16, topPad, 16, bottomPad),
-                          itemCount: itemBuilder != null ? itemCount : children.length,
-                          itemBuilder: (c, i) =>
-                              RepaintBoundary(child: itemBuilder != null ? itemBuilder!(c, i) : children[i]),
-                        ),
+                builder: (c, bc) {
+                  final list = RefreshIndicator(
+                    onRefresh: onRefresh,
+                    child: FadeTop(
+                      fade: fade,
+                      child: ListView.builder(
+                        controller: controller,
+                        physics: lockList
+                            ? const NeverScrollableScrollPhysics()
+                            : const AlwaysScrollableScrollPhysics(),
+                        cacheExtent: 600,
+                        padding: EdgeInsets.fromLTRB(16, topPad + r, 16, bottomPad),
+                        itemCount: itemBuilder != null ? itemCount : children.length,
+                        itemBuilder: (c, i) =>
+                            RepaintBoundary(child: itemBuilder != null ? itemBuilder!(c, i) : children[i]),
                       ),
                     ),
-                  ),
-                ]),
+                  );
+                  return Column(children: [
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: bc.maxHeight * .6),
+                      child: SingleChildScrollView(
+                        physics: lockHeader ? const NeverScrollableScrollPhysics() : const ClampingScrollPhysics(),
+                        padding: EdgeInsets.fromLTRB(16, headerTop, 16, 0),
+                        child: header,
+                      ),
+                    ),
+                    Expanded(
+                      child: !edge
+                          ? list
+                          : Stack(clipBehavior: Clip.none, children: [
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                top: -r,
+                                bottom: 0,
+                                child: ClipPath(
+                                    clipper: _HdrClipper(r), clipBehavior: Clip.antiAlias, child: list),
+                              ),
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                top: -r,
+                                bottom: 0,
+                                child: IgnorePointer(
+                                    child: CustomPaint(painter: _HdrShadowPainter(r), size: Size.infinite)),
+                              ),
+                            ]),
+                    ),
+                  ]);
+                },
               );
             }
+          }
+
+          Path _hdrShape(double w, double r) => Path()
+            ..addRRect(RRect.fromLTRBAndCorners(-20, -400, w + 20, r,
+                bottomLeft: Radius.circular(r), bottomRight: Radius.circular(r)));
+
+          /// ناحیهٔ دیدنی لیست = همهٔ فضا منهای هدر گرد (هر چه زیر هدر برود پنهان می‌شود)
+          class _HdrClipper extends CustomClipper<Path> {
+            final double r;
+            _HdrClipper(this.r);
+            @override
+            Path getClip(Size size) => Path.combine(PathOperation.difference,
+                Path()..addRect(Offset.zero & size), _hdrShape(size.width, r));
+            @override
+            bool shouldReclip(_HdrClipper old) => old.r != r;
+          }
+
+          /// سایهٔ نرم لبهٔ پایین هدر
+          class _HdrShadowPainter extends CustomPainter {
+            final double r;
+            _HdrShadowPainter(this.r);
+            @override
+            void paint(Canvas canvas, Size size) {
+              final shape = _hdrShape(size.width, r);
+              canvas.save();
+              canvas.clipPath(Path.combine(PathOperation.difference,
+                  Path()..addRect(Offset.zero & size), shape));
+              canvas.drawShadow(shape, Colors.black.withValues(alpha: .85), 7, false);
+              canvas.restore();
+            }
+
+            @override
+            bool shouldRepaint(_HdrShadowPainter old) => old.r != r;
           }
 
           // ---------- ترتیب الفبایی فارسی ----------
@@ -8425,7 +8487,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               final tt = Theme.of(context).textTheme;
-              return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), children: [
+              return ListView(padding: EdgeInsets.fromLTRB(16, 16, 16, 100 + MediaQuery.paddingOf(context).bottom), children: [
                 Text('پشتیبان‌گیری و خروجی', style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 card(context, bgTile(context, 'backup')),
@@ -8761,7 +8823,7 @@ jobs:
                 listenable: Listenable.merge([store, unit, uiStyles]),
                 builder: (c, _) {
                   final email = sb.auth.currentUser?.email ?? '';
-                  return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), children: [
+                  return ListView(padding: EdgeInsets.fromLTRB(16, 16, 16, 100 + MediaQuery.paddingOf(c).bottom), children: [
                     Text('تنظیمات', style: Theme.of(c).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     card(c, bgTile(c, 'settings')),
