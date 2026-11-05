@@ -2419,9 +2419,22 @@ jobs:
                         labelBehavior: uiStyles.n('nav_labels', 1) > .5
                             ? NavigationDestinationLabelBehavior.alwaysShow
                             : NavigationDestinationLabelBehavior.alwaysHide,
+                        indicatorColor: Colors.transparent,
+                        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
                         selectedIndex: order.indexOf(i),
                         onDestinationSelected: (v) => setState(() => i = order[v]),
-                        destinations: [for (final k in order) _navItems[k]],
+                        destinations: [
+                          for (final k in order)
+                            NavigationDestination(
+                              icon: Icon((_navItems[k].icon as Icon).icon, size: uiStyles.n('nav_ic', 24)),
+                              selectedIcon: Icon((_navItems[k].selectedIcon as Icon).icon,
+                                  size: uiStyles.n('nav_ic_act', 30),
+                                  color: uiStyles.bgOf('nav_act_c') != null
+                                      ? Color(uiStyles.bgOf('nav_act_c')!)
+                                      : Theme.of(c).colorScheme.primary),
+                              label: _navItems[k].label,
+                            ),
+                        ],
                       ),
                     );
                     return Padding(
@@ -2584,10 +2597,10 @@ jobs:
               if (ok) toast(context, 'نسخه پشتیبان ابری ساخته شد');
             }
 
-            // یادآوری‌ها: سررسید حساب‌ها، اقساط وام و چک‌ها (تا ۱۴ روز آینده و معوق)
+            // یادآوری‌ها: سررسید حساب‌ها، اقساط وام و چک‌ها (فقط ۵ روز مانده به سررسید و معوق)
             List<Widget> _noteItems(BuildContext c) {
               final today = _today0();
-              bool soon(DateTime? d) => d != null && d.difference(today).inDays <= 14;
+              bool soon(DateTime? d) => d != null && d.difference(today).inDays <= 5;
               final items = <Widget>[];
               final dueAccs = store.accs.where((a) => !a.settled && soon(a.due)).toList()
                 ..sort((x, y) => x.due!.compareTo(y.due!));
@@ -2742,14 +2755,24 @@ jobs:
                   const SizedBox(width: 6),
                   _tbEl(
                       'save',
-                      _topBtn(
-                          c,
-                          'ذخیره آنلاین',
-                          saving
+                      Tooltip(
+                        message: 'ذخیره آنلاین',
+                        child: OutlinedButton(
+                          onPressed: saving ? null : () => _save(c),
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            padding: const EdgeInsets.all(6),
+                            minimumSize: const Size(34, 34),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                            side: BorderSide(color: cs.onSurfaceVariant, width: 1.5),
+                          ),
+                          child: saving
                               ? const SizedBox(
-                                  width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.sync_rounded, size: 22),
-                          saving ? null : () => _save(c))),
+                                  width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.sync_rounded, size: 20),
+                        ),
+                      )),
                   _tbEl(
                       'gear',
                       IconButton(
@@ -7396,6 +7419,29 @@ jobs:
                         (v) => uiStyles.change('home_nav', (x) => x.bo = v),
                         icon: Icons.opacity),
                   ],
+                  const Divider(),
+                  _optTitle(Icons.touch_app_outlined, 'آیکون‌های نوار پایین'),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'اندازهٔ آیکون‌ها بدون تغییر اندازهٔ کادر نوار عوض می‌شود. به‌جای کادر دور آیکون، اندازه و رنگ آیکون فعال طبق تنظیم زیر تغییر می‌کند.',
+                      style: TextStyle(fontSize: 12)),
+                  const SizedBox(height: 8),
+                  _nSlider('اندازهٔ آیکون‌ها', 'nav_ic', 24, 16, 40, icon: Icons.photo_size_select_small),
+                  _nSlider('اندازهٔ آیکون فعال', 'nav_ic_act', 30, 16, 48, icon: Icons.zoom_out_map),
+                  _colorRow(c, 'رنگ آیکون فعال', uiStyles.bgOf('nav_act_c'),
+                      (v) => uiStyles.setBg('nav_act_c', v),
+                      icon: Icons.palette_outlined),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        uiStyles.resetN('nav_ic');
+                        uiStyles.setBg('nav_act_c', null);
+                      },
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('بازنشانی آیکون‌ها'),
+                    ),
+                  ),
                   const Divider(),
                   const NavOrderEditor(),
                   Align(
