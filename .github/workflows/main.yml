@@ -2370,6 +2370,9 @@ jobs:
                             ? (baseCol ?? Theme.of(c).colorScheme.surfaceContainer).withValues(alpha: .4)
                             : baseCol,
                         surfaceTintColor: Colors.transparent,
+                        labelBehavior: uiStyles.n('nav_labels', 1) > .5
+                            ? NavigationDestinationLabelBehavior.alwaysShow
+                            : NavigationDestinationLabelBehavior.alwaysHide,
                         selectedIndex: order.indexOf(i),
                         onDestinationSelected: (v) => setState(() => i = order[v]),
                         destinations: [for (final k in order) _navItems[k]],
@@ -5475,6 +5478,15 @@ jobs:
               await _save();
             }
 
+            // افکت باز شدن صفحه‌ها ('none' = مثل صفحهٔ لیست اقساط وام)
+            String pageFx = 'slide_r';
+
+            Future<void> setFx(String v) async {
+              pageFx = v;
+              notifyListeners();
+              await _save();
+            }
+
             // ترتیب آیکون‌های نوار پایین (۰ خانه، ۱ پشتیبان، ۲ تنظیمات)
             List<int> navOrder = [0, 1, 2];
 
@@ -5577,6 +5589,8 @@ jobs:
                   bgs.forEach((k, v) => _bg['$k'] = (v as num).toInt());
                   final nn = (j['n'] as Map?) ?? {};
                   nn.forEach((k, v) => _n['$k'] = (v as num).toDouble());
+                  final fx = j['fx'];
+                  if (fx is String && (fx == 'none' || kPageFx.any((e) => e[0] == fx))) pageFx = fx;
                   final no = ((j['nav'] as List?) ?? []).map((e) => (e as num).toInt()).toList();
                   if (no.length == 3 && no.toSet().length == 3 && no.every((e) => e >= 0 && e < 3)) navOrder = no;
                   final sq = (j['sq'] as Map?) ?? {};
@@ -5599,6 +5613,7 @@ jobs:
                       'bg': _bg,
                       'n': _n,
                       'nav': navOrder,
+                      'fx': pageFx,
                       'sq': {'on': sqMode, 'cols': sqCols, 'rows': sqRows, 'scale': sqScale},
                     }));
               } catch (_) {}
@@ -5831,20 +5846,93 @@ jobs:
                   );
           }
 
-          /// گذار کشویی: صفحه از راست به چپ می‌لغزد و هنگام بستن دوباره به سمت راست برمی‌گردد
+          /// افکت‌های قابل انتخاب برای باز و بسته شدن صفحه‌ها (کلید، نام، آیکون)
+          const kPageFx = <List<Object>>[
+            ['slide_r', 'کشویی از راست به چپ', Icons.arrow_back],
+            ['slide_l', 'کشویی از چپ به راست', Icons.arrow_forward],
+            ['slide_up', 'کشویی از پایین', Icons.arrow_upward],
+            ['slide_down', 'کشویی از بالا', Icons.arrow_downward],
+            ['fade', 'محو شدن نرم', Icons.blur_on],
+            ['scale', 'بزرگ‌نمایی از مرکز', Icons.zoom_out_map],
+            ['zoom_out', 'زوم به عقب', Icons.zoom_in_map],
+            ['slide_fade', 'کشویی همراه با محو', Icons.double_arrow],
+            ['rotate', 'چرخش ملایم', Icons.rotate_right],
+            ['curtain', 'پرده‌ای از راست', Icons.view_carousel_outlined],
+          ];
+
+          class _RevealClipper extends CustomClipper<Rect> {
+            final double v;
+            _RevealClipper(this.v);
+            @override
+            Rect getClip(Size size) => Rect.fromLTRB(size.width * (1 - v), 0, size.width, size.height);
+            @override
+            bool shouldReclip(_RevealClipper old) => old.v != v;
+          }
+
+          Widget _fxBuild(String fx, Animation<double> a, Widget child) {
+            // «none» = همان افکت باز شدن صفحهٔ لیست اقساط وام (FastRoute)
+            if (fx == 'none') {
+              return SlideTransition(
+                position: Tween<Offset>(begin: const Offset(0, .04), end: Offset.zero)
+                    .chain(CurveTween(curve: Curves.easeOutCubic))
+                    .animate(a),
+                child: child,
+              );
+            }
+            final c = CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+            Widget slide(Offset from, {bool fade = false}) {
+              final w = SlideTransition(position: c.drive(Tween<Offset>(begin: from, end: Offset.zero)), child: child);
+              return fade ? FadeTransition(opacity: c, child: w) : w;
+            }
+
+            switch (fx) {
+              case 'slide_l':
+                return slide(const Offset(-1, 0));
+              case 'slide_up':
+                return slide(const Offset(0, 1));
+              case 'slide_down':
+                return slide(const Offset(0, -1));
+              case 'fade':
+                return FadeTransition(opacity: c, child: child);
+              case 'scale':
+                return FadeTransition(
+                    opacity: c,
+                    child: ScaleTransition(scale: c.drive(Tween<double>(begin: .85, end: 1)), child: child));
+              case 'zoom_out':
+                return FadeTransition(
+                    opacity: c,
+                    child: ScaleTransition(scale: c.drive(Tween<double>(begin: 1.18, end: 1)), child: child));
+              case 'slide_fade':
+                return slide(const Offset(.3, 0), fade: true);
+              case 'rotate':
+                return FadeTransition(
+                    opacity: c,
+                    child: ScaleTransition(
+                        scale: c.drive(Tween<double>(begin: .88, end: 1)),
+                        child: RotationTransition(
+                            turns: c.drive(Tween<double>(begin: -.04, end: 0)), child: child)));
+              case 'curtain':
+                return AnimatedBuilder(
+                  animation: c,
+                  builder: (_, ch) => ClipRect(clipper: _RevealClipper(c.value.clamp(0.001, 1.0).toDouble()), child: ch),
+                  child: child,
+                );
+              default:
+                return slide(const Offset(1, 0));
+            }
+          }
+
+          /// گذار صفحه‌های وام، چک، اشخاص، طلبکاری و بدهکاری؛ افکت از تنظیمات صفحهٔ خانه خوانده می‌شود
           class SlideRoute<T> extends PageRouteBuilder<T> {
-            SlideRoute({required WidgetBuilder builder})
+            SlideRoute({required WidgetBuilder builder}) : this._(builder, uiStyles.pageFx);
+
+            SlideRoute._(WidgetBuilder builder, String fx)
                 : super(
                     opaque: true,
                     pageBuilder: (c, a, s) => builder(c),
-                    transitionDuration: const Duration(milliseconds: 380),
-                    reverseTransitionDuration: const Duration(milliseconds: 320),
-                    transitionsBuilder: (c, a, s, child) => SlideTransition(
-                      position: CurvedAnimation(
-                              parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic)
-                          .drive(Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)),
-                      child: child,
-                    ),
+                    transitionDuration: Duration(milliseconds: fx == 'none' ? 150 : 380),
+                    reverseTransitionDuration: Duration(milliseconds: fx == 'none' ? 120 : 320),
+                    transitionsBuilder: (c, a, s, child) => _fxBuild(fx, a, child),
                   );
           }
 
@@ -6461,6 +6549,54 @@ jobs:
             }
           }
 
+          class FxEditor extends StatelessWidget {
+            const FxEditor({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) {
+                  Widget tile(String k, String label, IconData ic) {
+                    final sel = uiStyles.pageFx == k;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      selected: sel,
+                      leading: Icon(ic),
+                      title: Text(label, style: TextStyle(fontWeight: sel ? FontWeight.bold : FontWeight.normal)),
+                      trailing: sel ? const Icon(Icons.check_circle) : null,
+                      onTap: () => uiStyles.setFx(k),
+                    );
+                  }
+
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text(
+                        'افکت باز و بسته شدن صفحه‌های وام، چک، اشخاص، طلبکاری‌ها و بدهکاری‌ها',
+                        style: TextStyle(fontSize: 12)),
+                    const SizedBox(height: 4),
+                    tile('none', 'بدون افکت (مثل باز شدن لیست اقساط وام)', Icons.block),
+                    for (final e in kPageFx) tile(e[0] as String, e[1] as String, e[2] as IconData),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => Navigator.push(
+                            c,
+                            SlideRoute(
+                                builder: (_) => Scaffold(
+                                    appBar: AppBar(title: const Text('پیش‌نمایش افکت')),
+                                    body: const Center(child: Text('برای دیدن افکت بسته شدن، برگردید'))))),
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('امتحان افکت'),
+                      ),
+                    ),
+                  ]);
+                },
+              );
+            }
+          }
+
           /// جابه‌جایی جای آیکون‌های نوار پایین: یک آیکون را انتخاب کنید و روی آیکون دیگر بزنید
           class NavOrderEditor extends StatefulWidget {
             const NavOrderEditor({super.key});
@@ -6542,6 +6678,14 @@ jobs:
                   _nSlider('ارتفاع نوار', 'nav_h', 80, 56, 120, icon: Icons.height),
                   _nSlider('فاصله از پایین (بالا/پایین بردن)', 'nav_lift', 10, 0, 160,
                       icon: Icons.vertical_align_bottom),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text('نمایش نام زیر آیکون‌ها', style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text('با برداشتن تیک، نام زیر آیکون‌های نوار پایین حذف می‌شود'),
+                    value: uiStyles.n('nav_labels', 1) > .5,
+                    onChanged: (v) => uiStyles.setN('nav_labels', v == true ? 1 : 0),
+                  ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     secondary: const Icon(Icons.blur_on),
@@ -6907,6 +7051,13 @@ jobs:
                     bgTile(ctx, 'home'),
                     alertSettingsTile(ctx),
                     bgTile(ctx, 'fab', title: 'رنگ کادر اضافه کردن اشخاص'),
+                    const ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.only(bottom: 8),
+                      leading: Icon(Icons.animation),
+                      title: Text('افکت', style: TextStyle(fontWeight: FontWeight.bold)),
+                      children: [FxEditor()],
+                    ),
                     const ExpansionTile(
                       tilePadding: EdgeInsets.zero,
                       childrenPadding: EdgeInsets.only(bottom: 8),
