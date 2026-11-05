@@ -2196,7 +2196,7 @@ jobs:
 
             @override
             Widget build(BuildContext context) => GlassFrame(
-                keys: i == 0 ? const ['home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : const [],
+                keys: i == 0 ? const ['home_toolbar', 'home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : const [],
                 child: PopScope(
                     canPop: i == 0,
                     onPopInvokedWithResult: (didPop, result) {
@@ -2228,7 +2228,22 @@ jobs:
                     : null,
                 bottomNavigationBar: ListenableBuilder(
                   listenable: uiStyles,
-                  builder: (c, _) => NavigationBar(
+                  builder: (c, _) {
+                    final inset = MediaQuery.viewPaddingOf(c).bottom;
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: inset + uiStyles.n('nav_lift', 10)),
+                      child: Align(
+                        heightFactor: 1,
+                        alignment: Alignment.center,
+                        child: FractionallySizedBox(
+                          widthFactor: uiStyles.n('nav_w', .95).clamp(.5, 1.0).toDouble(),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(uiStyles.n('nav_r', 20)),
+                            child: MediaQuery.removePadding(
+                              context: c,
+                              removeBottom: true,
+                              child: NavigationBar(
+                  height: uiStyles.n('nav_h', 80),
                   backgroundColor: uiStyles.bgOf('navbar') == null ? null : Color(uiStyles.bgOf('navbar')!),
                   surfaceTintColor: Colors.transparent,
                   selectedIndex: i,
@@ -2238,7 +2253,14 @@ jobs:
                     NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
                     NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
                   ],
-                )),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ));
             }
           }
@@ -2450,6 +2472,103 @@ jobs:
                     ),
                   ),
                 ),
+              );
+            }
+
+            void _openCal(BuildContext c) => showDialog(
+                context: c,
+                builder: (_) => JalaliPickerDialog(initial: DateTime.now(), help: 'تقویم شمسی'));
+
+            // جابه‌جایی (و اندازهٔ کلی) یک عنصر نوار ابزار
+            Widget _tbEl(String k, Widget child, {double dx = 0, bool scale = true}) {
+              final sc = uiStyles.n('tb_${k}_s', 1);
+              Widget w = child;
+              if (scale && sc != 1) w = Transform.scale(scale: sc, child: w);
+              return Transform.translate(
+                  offset: Offset(uiStyles.n('tb_${k}_dx', dx), uiStyles.n('tb_${k}_dy', 0)), child: w);
+            }
+
+            Widget _toolbar(BuildContext c, List<Widget> notes) {
+              final cs = Theme.of(c).colorScheme;
+              final calS = uiStyles.n('tb_cal_s', 1), gearS = uiStyles.n('tb_gear_s', 1);
+              final dateS = uiStyles.n('tb_date_s', 1);
+              return styledBox(
+                c,
+                uiStyles.of('home_toolbar'),
+                cs.surfaceContainerLow,
+                Row(children: [
+                  _tbEl(
+                      'cal',
+                      IconButton(
+                          tooltip: 'تقویم شمسی',
+                          color: _kNavy,
+                          iconSize: 24 * calS,
+                          icon: const Icon(Icons.calendar_month_rounded),
+                          onPressed: () => _openCal(c)),
+                      scale: false),
+                  Expanded(
+                    child: _tbEl(
+                        'date',
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(_today(),
+                                  maxLines: 1,
+                                  style: TextStyle(fontSize: 13 * dateS, fontWeight: FontWeight.bold))),
+                        ),
+                        scale: false),
+                  ),
+                  const SizedBox(width: 6),
+                  _tbEl(
+                      'bell',
+                      OutlinedButton(
+                        onPressed: () => _notes(c, notes),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          minimumSize: const Size(44, 40),
+                          visualDensity: VisualDensity.compact,
+                          side: BorderSide(color: cs.outlineVariant, width: 1.5),
+                        ),
+                        child: Stack(clipBehavior: Clip.none, children: [
+                          const Icon(Icons.notifications_none_rounded, size: 22),
+                          if (notes.isNotEmpty)
+                            Positioned(
+                                top: -1,
+                                right: -1,
+                                child: Container(
+                                    width: 9,
+                                    height: 9,
+                                    decoration: const BoxDecoration(
+                                        color: Color(0xFFE5484D), shape: BoxShape.circle))),
+                        ]),
+                      )),
+                  const SizedBox(width: 6),
+                  _tbEl(
+                      'save',
+                      _topBtn(
+                          c,
+                          'ذخیره آنلاین',
+                          saving
+                              ? const SizedBox(
+                                  width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.sync_rounded, size: 22),
+                          saving ? null : () => _save(c))),
+                  _tbEl(
+                      'gear',
+                      IconButton(
+                        tooltip: 'تنظیمات ظاهر صفحه خانه',
+                        iconSize: 24 * gearS,
+                        icon: const Icon(Icons.settings_outlined),
+                        onPressed: () => showHomeStyleSheet(c),
+                      ),
+                      dx: -10,
+                      scale: false),
+                ]),
+                radius: uiStyles.n('tb_radius', 18),
+                pad: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                blur: true,
               );
             }
 
@@ -2756,7 +2875,6 @@ jobs:
                   final rows = store.contacts.map((p) => MapEntry(p, netOf('${p['id']}'))).toList()
                     ..sort((x, y) => faCompare('${x.key['name']}', '${y.key['name']}'));
 
-                  final tt = Theme.of(c).textTheme;
                   final chqMap = chequesByContact();
                   final accOwners = store.accs.map((a) => a.contactId).toSet();
                   final dy = uiStyles.rect('people')[1];
@@ -2771,53 +2889,8 @@ jobs:
                     fade: !uiStyles.of('home_contacts').glass,
                     bottomPad: 0,
                     header: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        const SizedBox(height: 4),
-                        Row(children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                                color: _kNavy.withValues(alpha: .12),
-                                borderRadius: BorderRadius.circular(12)),
-                            child: const Icon(Icons.calendar_month_rounded, color: _kNavy),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                              child: Text(_today(),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: tt.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
-                          _topBtn(
-                              c,
-                              'پیام جدید',
-                              Stack(clipBehavior: Clip.none, children: [
-                                const Icon(Icons.notifications_none_rounded, size: 22),
-                                if (notes.isNotEmpty)
-                                  Positioned(
-                                      top: -1,
-                                      right: -1,
-                                      child: Container(
-                                          width: 9,
-                                          height: 9,
-                                          decoration: const BoxDecoration(
-                                              color: Color(0xFFE5484D), shape: BoxShape.circle))),
-                              ]),
-                              () => _notes(c, notes)),
-                          const SizedBox(width: 8),
-                          _topBtn(
-                              c,
-                              'ذخیره آنلاین',
-                              saving
-                                  ? const SizedBox(
-                                      width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                                  : const Icon(Icons.sync_rounded, size: 22),
-                              saving ? null : () => _save(c)),
-                          IconButton(
-                            tooltip: 'تنظیمات ظاهر صفحه خانه',
-                            icon: const Icon(Icons.settings_outlined),
-                            onPressed: () => showHomeStyleSheet(c),
-                          ),
-                        ]),
+                        SizedBox(height: uiStyles.n('tb_top', 12)),
+                        _toolbar(c, notes),
                         _canvas(c, rec, pay, net),
                         offlineBanner(c),
                     ]),
@@ -2905,9 +2978,12 @@ jobs:
                       Text('${faDigits('${chq.length}')} چک',
                           style: const TextStyle(color: cChq, fontWeight: FontWeight.bold)),
                   ])),
-                  if (hasAcc || chq.isEmpty)
-                    iconBox(col, n > 0 ? Icons.trending_up : (n < 0 ? Icons.trending_down : Icons.check_rounded)),
+                  // راست: چک — چپ: حساب (اگر فقط چک دارد، جای حساب خالی می‌ماند)
                   if (chq.isNotEmpty) iconBox(cChq, Icons.receipt_long),
+                  if (hasAcc || chq.isEmpty)
+                    iconBox(col, n > 0 ? Icons.trending_up : (n < 0 ? Icons.trending_down : Icons.check_rounded))
+                  else
+                    const SizedBox(width: 54),
                 ]),
                 onTap: _guard(() => _open(c, PersonPage(id))),
               );
@@ -2959,51 +3035,59 @@ jobs:
                 VoidCallback f) {
               final s = uiStyles.of('home_contacts');
               final tc = s.textColor != null ? Color(s.textColor!) : null;
-              final nameF = (u * .15).clamp(9.0, 20.0).toDouble();
-              final amtF = (u * .125).clamp(8.0, 17.0).toDouble();
-              final ic = (u * .16).clamp(10.0, 22.0).toDouble();
+              double ns(String k) => uiStyles.n('sq_${k}_s', 1);
+              Widget at(Alignment al, String k, Widget w) => Align(
+                  alignment: al,
+                  child: Transform.translate(
+                      offset: Offset(uiStyles.n('sq_${k}_dx', 0) * u, uiStyles.n('sq_${k}_dy', 0) * u),
+                      child: w));
+              final nameF = (u * .15).clamp(9.0, 20.0).toDouble() * ns('name');
+              final amtF = (u * .125).clamp(8.0, 17.0).toDouble() * ns('amt');
+              final ic = (u * .16).clamp(10.0, 22.0).toDouble() * ns('ic');
               final showMoney = hasAcc || chqCount == 0;
               final mCol = n > 0 ? cRec : (n < 0 ? cPay : Colors.grey);
+              // راست: چک — چپ: حساب (اگر فقط چک دارد، جای حساب خالی می‌ماند)
               final icons = <Widget>[
+                if (chqCount > 0) Icon(Icons.receipt_long, size: ic, color: cChq),
                 if (showMoney && n > 0) Icon(Icons.trending_up, size: ic, color: cRec),
                 if (showMoney && n < 0) Icon(Icons.trending_down, size: ic, color: cPay),
                 if (showMoney && n == 0) Icon(Icons.check_rounded, size: ic, color: Colors.grey),
-                if (chqCount > 0) Icon(Icons.receipt_long, size: ic, color: cChq),
+                if (!showMoney) SizedBox(width: ic, height: ic),
               ];
               return styledBox(
                 c,
                 s,
                 Theme.of(c).colorScheme.surfaceContainerLow,
                 SizedBox.expand(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                    FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(name,
-                            maxLines: 1,
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: nameF, color: tc))),
-                    Expanded(
-                      child: Center(
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          FittedBox(
+                  child: Stack(children: [
+                    at(
+                        Alignment.topCenter,
+                        'name',
+                        FittedBox(
                             fit: BoxFit.scaleDown,
-                            child: showMoney
-                                ? Text(n == 0 ? 'تسویه' : money(n.abs()),
-                                    style: TextStyle(color: mCol, fontWeight: FontWeight.bold, fontSize: amtF))
-                                : Text('${faDigits('$chqCount')} چک',
-                                    style: TextStyle(color: cChq, fontWeight: FontWeight.bold, fontSize: amtF)),
-                          ),
-                          SizedBox(height: u * .05),
-                          Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                for (var i = 0; i < icons.length; i++) ...[
-                                  if (i > 0) SizedBox(width: u * .05),
-                                  icons[i],
-                                ],
-                              ]),
-                        ]),
-                      ),
-                    ),
+                            child: Text(name,
+                                maxLines: 1,
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: nameF, color: tc)))),
+                    at(
+                        const Alignment(0, -.05),
+                        'amt',
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: showMoney
+                              ? Text(n == 0 ? 'تسویه' : money(n.abs()),
+                                  style: TextStyle(color: mCol, fontWeight: FontWeight.bold, fontSize: amtF))
+                              : Text('${faDigits('$chqCount')} چک',
+                                  style: TextStyle(color: cChq, fontWeight: FontWeight.bold, fontSize: amtF)),
+                        )),
+                    at(
+                        const Alignment(0, .62),
+                        'ic',
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          for (var i = 0; i < icons.length; i++) ...[
+                            if (i > 0) SizedBox(width: u * .05),
+                            icons[i],
+                          ],
+                        ])),
                   ]),
                 ),
                 onTap: f,
@@ -5222,6 +5306,22 @@ jobs:
             final Map<String, List<double>> _r = {};
             final Map<String, int> _bg = {};
 
+            // تنظیمات عددی عمومی (اندازه و جای عناصر نوار ابزار، نوار پایین و محتوای مربع‌ها)
+            final Map<String, double> _n = {};
+            double n(String k, double def) => _n[k] ?? def;
+
+            Future<void> setN(String k, double v) async {
+              _n[k] = v;
+              notifyListeners();
+              await _save();
+            }
+
+            Future<void> resetN(String prefix) async {
+              _n.removeWhere((k, v) => k.startsWith(prefix));
+              notifyListeners();
+              await _save();
+            }
+
             // حالت مربعی کادر اشخاص در صفحهٔ خانه
             bool sqMode = false;
             int sqCols = 3; // تعداد مربع در هر ردیف
@@ -5264,8 +5364,9 @@ jobs:
               }
             }
 
-            static double defOp(String k) =>
-                (k == 'cheq_top' || k == 'loan_top' || k == 'loand_top' || k.endsWith('_chip')) ? .12 : 1;
+            static double defOp(String k) => k == 'home_toolbar'
+                ? 0
+                : ((k == 'cheq_top' || k == 'loan_top' || k == 'loand_top' || k.endsWith('_chip')) ? .12 : 1);
 
             BoxStyle of(String k) => _m.putIfAbsent(k, () => BoxStyle(opacity: defOp(k)));
 
@@ -5312,6 +5413,8 @@ jobs:
                   });
                   final bgs = (j['bg'] as Map?) ?? {};
                   bgs.forEach((k, v) => _bg['$k'] = (v as num).toInt());
+                  final nn = (j['n'] as Map?) ?? {};
+                  nn.forEach((k, v) => _n['$k'] = (v as num).toDouble());
                   final sq = (j['sq'] as Map?) ?? {};
                   sqMode = sq['on'] == true;
                   sqCols = ((sq['cols'] ?? 3) as num).toInt().clamp(1, 6);
@@ -5330,6 +5433,7 @@ jobs:
                       'boxes': _m.map((k, v) => MapEntry(k, v.toJson())),
                       'rects': _r,
                       'bg': _bg,
+                      'n': _n,
                       'sq': {'on': sqMode, 'cols': sqCols, 'rows': sqRows, 'scale': sqScale},
                     }));
               } catch (_) {}
@@ -5562,18 +5666,18 @@ jobs:
                   );
           }
 
-          /// گذار کشویی: صفحه از پایین بالا می‌آید و هنگام بستن دوباره به پایین می‌لغزد
+          /// گذار کشویی: صفحه از راست به چپ می‌لغزد و هنگام بستن دوباره به سمت راست برمی‌گردد
           class SlideRoute<T> extends PageRouteBuilder<T> {
             SlideRoute({required WidgetBuilder builder})
                 : super(
                     opaque: true,
                     pageBuilder: (c, a, s) => builder(c),
-                    transitionDuration: const Duration(milliseconds: 320),
-                    reverseTransitionDuration: const Duration(milliseconds: 260),
+                    transitionDuration: const Duration(milliseconds: 380),
+                    reverseTransitionDuration: const Duration(milliseconds: 320),
                     transitionsBuilder: (c, a, s, child) => SlideTransition(
                       position: CurvedAnimation(
                               parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic)
-                          .drive(Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)),
+                          .drive(Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)),
                       child: child,
                     ),
                   );
@@ -6124,13 +6228,109 @@ jobs:
                 Slider(value: v.clamp(min, max).toDouble(), min: min, max: max, onChanged: f),
               ]);
 
+          /// لغزندهٔ عددی ذخیره‌شونده در uiStyles؛ pct = نمایش به‌صورت درصد
+          Widget _nSlider(String label, String k, double def, double min, double max,
+                  {bool pct = false, IconData? icon}) =>
+              Column(children: [
+                Row(children: [
+                  _optTitle(icon, label),
+                  const Spacer(),
+                  Text(faDigits(pct
+                      ? '${(uiStyles.n(k, def) * 100).round()}٪'
+                      : uiStyles.n(k, def).toStringAsFixed(0))),
+                ]),
+                Slider(
+                    value: uiStyles.n(k, def).clamp(min, max).toDouble(),
+                    min: min,
+                    max: max,
+                    onChanged: (v) => uiStyles.setN(k, v)),
+              ]);
+
+          /// گروه اندازه + جابه‌جایی افقی و عمودی یک عنصر
+          Widget _elemGroup(String title, String prefix, {double dx = 0, bool pct = false, double move = 80}) =>
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                title: Text(title),
+                children: [
+                  _nSlider('اندازه', '${prefix}_s', 1, .5, 2.2, pct: true, icon: Icons.zoom_out_map),
+                  _nSlider('جای افقی (راست/چپ)', '${prefix}_dx', dx, -move, move,
+                      pct: pct, icon: Icons.swap_horiz),
+                  _nSlider('جای عمودی (بالا/پایین)', '${prefix}_dy', 0, -move, move,
+                      pct: pct, icon: Icons.swap_vert),
+                ],
+              );
+
+          class ToolbarEditor extends StatelessWidget {
+            const ToolbarEditor({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const StyleEditor('home_toolbar', glass: true, border: true, textSize: false, opMin: 0),
+                  _nSlider('گردی لبه‌های کادر', 'tb_radius', 18, 0, 40, icon: Icons.rounded_corner),
+                  _nSlider('فاصله از بالا (زیر دوربین)', 'tb_top', 12, 0, 60, icon: Icons.vertical_align_top),
+                  const Divider(),
+                  const Text('اندازه و جای عناصر داخل نوار ابزار',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  _elemGroup('آیکون تقویم', 'tb_cal'),
+                  _elemGroup('تاریخ', 'tb_date'),
+                  _elemGroup('آیکون پیام‌ها (زنگوله)', 'tb_bell'),
+                  _elemGroup('دکمهٔ ذخیره آنلاین', 'tb_save'),
+                  _elemGroup('آیکون چرخ‌دنده', 'tb_gear', dx: -10),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        uiStyles.reset(['home_toolbar']);
+                        uiStyles.resetN('tb_');
+                      },
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('بازگشت نوار ابزار به پیش‌فرض'),
+                    ),
+                  ),
+                ]),
+              );
+            }
+          }
+
+          class NavBarEditor extends StatelessWidget {
+            const NavBarEditor({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  bgTile(c, 'navbar', title: 'رنگ نوار پایین'),
+                  _nSlider('گردی لبه‌ها', 'nav_r', 20, 0, 40, icon: Icons.rounded_corner),
+                  _nSlider('عرض نوار', 'nav_w', .95, .5, 1, pct: true, icon: Icons.swap_horiz),
+                  _nSlider('ارتفاع نوار', 'nav_h', 80, 56, 120, icon: Icons.height),
+                  _nSlider('فاصله از پایین (بالا/پایین بردن)', 'nav_lift', 10, 0, 160,
+                      icon: Icons.vertical_align_bottom),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      onPressed: () => uiStyles.resetN('nav_'),
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('بازگشت نوار پایین به پیش‌فرض'),
+                    ),
+                  ),
+                ]),
+              );
+            }
+          }
+
           class StyleEditor extends StatelessWidget {
             final String k;
             final bool size, glass, border, textSize;
             final String sizeLabel;
-            final double sizeMin, sizeMax;
+            final double sizeMin, sizeMax, opMin;
             const StyleEditor(this.k,
                 {super.key,
+                this.opMin = .1,
                 this.size = false,
                 this.glass = false,
                 this.border = false,
@@ -6154,7 +6354,7 @@ jobs:
                       _sliderRow('اندازهٔ متن', s.textScale, .8, 1.6,
                           (v) => uiStyles.change(k, (x) => x.textScale = v),
                           icon: Icons.text_fields),
-                    _sliderRow('شفافیت کادر', s.opacity, .1, 1,
+                    _sliderRow('شفافیت کادر', s.opacity, opMin, 1,
                         (v) => uiStyles.change(k, (x) => x.opacity = v),
                         icon: Icons.opacity),
                     if (size)
@@ -6294,6 +6494,19 @@ jobs:
                         style: TextStyle(fontSize: 12)),
                     _sliderRow('اندازهٔ مربع‌ها', uiStyles.sqScale, .5, 1.0, (v) => uiStyles.setSq(scale: v),
                         icon: Icons.photo_size_select_small),
+                    const Text('اندازه و جای محتوای داخل مربع‌ها (جابه‌جایی نسبت به اندازهٔ مربع)',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    _elemGroup('نام اشخاص', 'sq_name', pct: true, move: .4),
+                    _elemGroup('ارقام طلب و بدهی', 'sq_amt', pct: true, move: .4),
+                    _elemGroup('آیکون‌های داخل مربع', 'sq_ic', pct: true, move: .4),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        onPressed: () => uiStyles.resetN('sq_'),
+                        icon: const Icon(Icons.restart_alt),
+                        label: const Text('بازگشت محتوای مربع‌ها به پیش‌فرض'),
+                      ),
+                    ),
                   ],
                   const Divider(),
                 ]),
@@ -6430,8 +6643,21 @@ jobs:
                     const SizedBox(height: 8),
                     bgTile(ctx, 'home'),
                     alertSettingsTile(ctx),
-                    bgTile(ctx, 'navbar', title: 'رنگ نوار پایین'),
                     bgTile(ctx, 'fab', title: 'رنگ کادر اضافه کردن اشخاص'),
+                    const ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.only(bottom: 8),
+                      leading: Icon(Icons.web_asset),
+                      title: Text('نوار ابزار', style: TextStyle(fontWeight: FontWeight.bold)),
+                      children: [ToolbarEditor()],
+                    ),
+                    const ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.only(bottom: 8),
+                      leading: Icon(Icons.call_to_action_outlined),
+                      title: Text('نوار پایین', style: TextStyle(fontWeight: FontWeight.bold)),
+                      children: [NavBarEditor()],
+                    ),
                     const Divider(),
                     Row(children: [
                       Expanded(
