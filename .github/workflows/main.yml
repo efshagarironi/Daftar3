@@ -2370,7 +2370,7 @@ jobs:
                         uiStyles.n('nav_w', .95).clamp(.5, 1.0).toDouble(),
                         uiStyles.n('nav_r', 20),
                       ),
-                      clipBehavior: Clip.antiAlias,
+                      clipBehavior: Clip.hardEdge,
                       child: child,
                     );
                   },
@@ -2486,6 +2486,16 @@ jobs:
 
             bool get _recentEdit =>
                 _editAt != null && DateTime.now().difference(_editAt!).inMilliseconds < 900;
+
+            DateTime _lastFire = DateTime(2000);
+
+            /// اجرای یک‌بارهٔ باز شدن صفحه (تکرار در ۶۰۰ میلی‌ثانیه نادیده گرفته می‌شود)
+            void _fire(VoidCallback f) {
+              final n = DateTime.now();
+              if (n.difference(_lastFire).inMilliseconds < 600) return;
+              _lastFire = n;
+              f();
+            }
 
             VoidCallback _guard(VoidCallback f) => () {
                   if (_recentEdit) return;
@@ -2892,9 +2902,16 @@ jobs:
               );
             }
 
-            Widget _bigFor(BuildContext c, String k) => k == 'loans'
-                ? _big(c, 'loans', 'وام‌ها', _kIndigo, _guard(() => _open(c, const LoansPage())))
-                : _big(c, 'cheques', 'چک‌ها', _kRose, _guard(() => _open(c, const ChequesPage())));
+            Widget _bigFor(BuildContext c, String k) {
+              final go = _guard(() => _fire(
+                  () => _open(c, k == 'loans' ? const LoansPage() : const ChequesPage())));
+              return QuickTap(
+                onTap: go,
+                child: k == 'loans'
+                    ? _big(c, 'loans', 'وام‌ها', _kIndigo, go)
+                    : _big(c, 'cheques', 'چک‌ها', _kRose, go),
+              );
+            }
 
             Widget _editBar(BuildContext c) => Material(
                   elevation: 6,
@@ -3031,6 +3048,44 @@ jobs:
               return b + kHomeTop;
             }
 
+            // حالت «اسکرول»: نوار ابزار ثابت می‌ماند
+            Widget _pinnedBlock(BuildContext c, List<Widget> notes) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: uiStyles.n('tb_top', 20)),
+                    SizedBox(height: 52, child: _toolbar(c, notes)),
+                    SizedBox(height: uiStyles.n('tbe_on', 0) > .5 ? uiStyles.n('tbe_gap', 0) : 0.0),
+                  ],
+                );
+
+            // حالت «اسکرول»: سه کادر بالا + کادر زیرین، همراه لیست اسکرول می‌شوند و زیر نوار ابزار پنهان می‌شوند
+            Widget _scrollBlock(BuildContext c, int rec, int pay, int net) {
+              final blk = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                _canvas(c, rec, pay, net),
+                offlineBanner(c),
+                SizedBox(height: uiStyles.n('hdr_gap', 0)),
+              ]);
+              return Stack(clipBehavior: Clip.none, children: [
+                blk,
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      size: Size.infinite,
+                      painter: _EdgePainter(
+                        top: 0,
+                        bottom: -1,
+                        r: uiStyles.n('hdr_r', 16),
+                        e: uiStyles.n('hdr_sh', 7),
+                        pad: 16,
+                        fm: uiStyles.n('hdr_fm', 6),
+                        float: uiStyles.n('hdr_float', 0) > .5,
+                      ),
+                    ),
+                  ),
+                ),
+              ]);
+            }
+
             // بالای صفحه: نوار ابزار + (اختیاری) لبهٔ سایه‌دار زیر آن + سه کادر
             Widget _headerBlock(BuildContext c, List<Widget> notes, int rec, int pay, int net) {
               final tbeOn = uiStyles.n('tbe_on', 0) > .5;
@@ -3107,20 +3162,26 @@ jobs:
                   final chqMap = chequesByContact();
                   final accOwners = store.accs.map((a) => a.contactId).toSet();
                   final dy = uiStyles.rect('people')[1];
+                  final collapse = uiStyles.n('hdr_scroll', 0) > .5;
+                  final tbeOn = uiStyles.n('tbe_on', 0) > .5;
                   final main = GlassBg(
                     keys: const ['home_hero', 'home_loans', 'home_cheques'],
                     child: FixedHeaderList(
                     onRefresh: store.load,
                     lockHeader: editing || selecting,
-                    lockList: selecting,
+                    lockList: selecting || (collapse && editing),
                     controller: _ctl,
                     topPad: 0,
                     headerTop: 0,
-                    edge: true,
+                    edge: collapse ? tbeOn : true,
                     fade: !uiStyles.of('home_contacts').glass,
                     bottomPad: MediaQuery.paddingOf(c).bottom,
-                    floatH: _canvasH() + uiStyles.n('hdr_gap', 0),
-                    header: _headerBlock(c, notes, rec, pay, net),
+                    floatH: collapse
+                        ? 52 + (tbeOn ? uiStyles.n('tbe_gap', 0) : 0.0)
+                        : _canvasH() + uiStyles.n('hdr_gap', 0),
+                    edgePrefix: collapse ? 'tbe' : 'hdr',
+                    header: collapse ? _pinnedBlock(c, notes) : _headerBlock(c, notes, rec, pay, net),
+                    collapseHeader: collapse ? _scrollBlock(c, rec, pay, net) : null,
                     children: [
                         SizedBox(height: math.max(0.0, kPeopleBase + dy)),
                         _peopleGroup(
@@ -6389,6 +6450,8 @@ jobs:
             final double headerTop;
             final bool edge; // لبه‌های پایین هدر گرد و سایه‌دار، و لیست زیر آن پنهان می‌شود
             final double floatH; // ارتفاع کادر زیرِ سه کادر (برای حالت شناور)
+            final Widget? collapseHeader; // اگر داده شود، همراه لیست اسکرول می‌شود و زیر هدر ثابت پنهان می‌شود
+            final String edgePrefix; // پیشوند تنظیمات لبه: hdr (زیر سه کادر) یا tbe (زیر نوار ابزار)
             final double bottomPad;
             const FixedHeaderList(
                 {super.key,
@@ -6405,14 +6468,17 @@ jobs:
                 this.headerTop = 8,
                 this.edge = false,
                 this.floatH = 0,
+                this.collapseHeader,
+                this.edgePrefix = 'hdr',
                 this.bottomPad = 100});
 
             @override
             Widget build(BuildContext context) {
-              final fl = edge && uiStyles.n('hdr_float', 0) > .5 && floatH > 0;
-              final r = edge ? uiStyles.n('hdr_r', 16) : 0.0;
-              final sh = edge ? uiStyles.n('hdr_sh', 7) : 0.0;
-              final fm = uiStyles.n('hdr_fm', 6);
+              final pre = edgePrefix;
+              final fl = edge && uiStyles.n('${pre}_float', 0) > .5 && floatH > 0;
+              final r = edge ? uiStyles.n('${pre}_r', 16) : 0.0;
+              final sh = edge ? uiStyles.n('${pre}_sh', 7) : 0.0;
+              final fm = uiStyles.n('${pre}_fm', 6);
               final up = fl ? floatH : r;
               return LayoutBuilder(
                 builder: (c, bc) {
@@ -6427,9 +6493,16 @@ jobs:
                             : const AlwaysScrollableScrollPhysics(),
                         cacheExtent: 600,
                         padding: EdgeInsets.fromLTRB(16, topPad + up, 16, bottomPad),
-                        itemCount: itemBuilder != null ? itemCount : children.length,
-                        itemBuilder: (c, i) =>
-                            RepaintBoundary(child: itemBuilder != null ? itemBuilder!(c, i) : children[i]),
+                        itemCount: itemBuilder != null
+                            ? itemCount
+                            : children.length + (collapseHeader != null ? 1 : 0),
+                        itemBuilder: (c, i) {
+                          if (collapseHeader != null && itemBuilder == null) {
+                            if (i == 0) return collapseHeader!;
+                            return RepaintBoundary(child: children[i - 1]);
+                          }
+                          return RepaintBoundary(child: itemBuilder != null ? itemBuilder!(c, i) : children[i]);
+                        },
                       ),
                     ),
                   );
@@ -6453,7 +6526,7 @@ jobs:
                                 bottom: 0,
                                 child: ClipPath(
                                     clipper: _EdgeClipper(up, r, fl, fm),
-                                    clipBehavior: Clip.antiAlias,
+                                    clipBehavior: Clip.hardEdge,
                                     child: list),
                               ),
                               Positioned(
@@ -6518,6 +6591,7 @@ jobs:
             @override
             void paint(Canvas canvas, Size size) {
               if (e <= 0) return;
+              final bottom = this.bottom < 0 ? size.height : this.bottom;
               final shape = _edgeShape(size.width, top, bottom, r, float, fm, pad: pad);
               final bound = float
                   ? Rect.fromLTRB(-pad - 80, top - 80, size.width + pad + 80, bottom + 80)
@@ -6554,6 +6628,45 @@ jobs:
           }
 
           /// نگه‌داشتن انگشت (پیش‌فرض ۲ ثانیه) روی ویجت
+          /// پشتیبانِ لمس: اگر به هر دلیل (مثلاً کشیده شدن جزئی انگشت یا افت فریم) تشخیص لمس عادی از دست رفت،
+          /// همین که انگشت نزدیک جای اول و کوتاه بلند شود، onTap اجرا می‌شود. onTap باید خودش تکرار را نادیده بگیرد.
+          class QuickTap extends StatefulWidget {
+            final Widget child;
+            final VoidCallback onTap;
+            const QuickTap({super.key, required this.child, required this.onTap});
+            @override
+            State<QuickTap> createState() => _QuickTapState();
+          }
+
+          class _QuickTapState extends State<QuickTap> {
+            Offset? _p0;
+            DateTime _t0 = DateTime.now();
+
+            @override
+            Widget build(BuildContext context) {
+              return Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (e) {
+                  _p0 = e.position;
+                  _t0 = DateTime.now();
+                },
+                onPointerUp: (e) {
+                  final p = _p0;
+                  _p0 = null;
+                  if (p == null) return;
+                  final ok = (e.position - p).distance < 40 &&
+                      DateTime.now().difference(_t0).inMilliseconds < 700;
+                  if (!ok) return;
+                  Future.delayed(const Duration(milliseconds: 90), () {
+                    if (mounted) widget.onTap();
+                  });
+                },
+                onPointerCancel: (_) => _p0 = null,
+                child: widget.child,
+              );
+            }
+          }
+
           class HoldDetector extends StatefulWidget {
             final Widget child;
             final VoidCallback onHold;
@@ -6749,11 +6862,24 @@ jobs:
           class HeaderEdgeEditor extends StatelessWidget {
             const HeaderEdgeEditor({super.key});
             @override
-            Widget build(BuildContext context) => const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('ناحیه‌ای که کادرهای اشخاص هنگام اسکرول زیر آن پنهان می‌شوند (زیر سه کادر بالا)',
-                      style: TextStyle(fontSize: 12)),
-                  EdgeEditor('hdr', gapLabel: 'فاصلهٔ لبهٔ کادر زیرین تا کادرهای وام و چک (۰ = چسبیده)'),
-                ]);
+            Widget build(BuildContext context) => ListenableBuilder(
+                  listenable: uiStyles,
+                  builder: (c, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('ناحیه‌ای که کادرهای اشخاص هنگام اسکرول زیر آن پنهان می‌شوند (زیر سه کادر بالا)',
+                        style: TextStyle(fontSize: 12)),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      secondary: const Icon(Icons.swap_vert),
+                      title: const Text('اسکرول', style: TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: const Text(
+                          'با اسکرول به بالا، اول کادر زیرین سه کادر بالا زیر نوار ابزار بالا می‌رود و پنهان می‌شود و بعد کادرهای اشخاص شروع به اسکرول می‌کنند؛ در برگشت، اول اشخاص و بعد آن کادر برمی‌گردد'),
+                      value: uiStyles.n('hdr_scroll', 0) > .5,
+                      onChanged: (v) => uiStyles.setN('hdr_scroll', v == true ? 1 : 0),
+                    ),
+                    const EdgeEditor('hdr', gapLabel: 'فاصلهٔ لبهٔ کادر زیرین تا کادرهای وام و چک (۰ = چسبیده)'),
+                  ]),
+                );
           }
 
           class ToolbarEditor extends StatelessWidget {
