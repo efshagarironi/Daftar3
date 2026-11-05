@@ -2978,6 +2978,50 @@ jobs:
             }
 
             // بوم آزاد سه کادر خانه: هر کادر x, y, عرض و ارتفاع مستقل دارد
+            double _canvasH() {
+              var b = 0.0;
+              for (final k in const ['hero', 'loans', 'cheques']) {
+                final r = uiStyles.rect(k);
+                b = math.max(b, r[1] + r[3]);
+              }
+              return b + kHomeTop;
+            }
+
+            // بالای صفحه: نوار ابزار + (اختیاری) لبهٔ سایه‌دار زیر آن + سه کادر
+            Widget _headerBlock(BuildContext c, List<Widget> notes, int rec, int pay, int net) {
+              final tbeOn = uiStyles.n('tbe_on', 0) > .5;
+              final tbTop = uiStyles.n('tb_top', 20);
+              final tbeGap = tbeOn ? uiStyles.n('tbe_gap', 0) : 0.0;
+              final col = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                SizedBox(height: tbTop),
+                SizedBox(height: 52, child: _toolbar(c, notes)),
+                SizedBox(height: tbeGap),
+                _canvas(c, rec, pay, net),
+                offlineBanner(c),
+                SizedBox(height: uiStyles.n('hdr_gap', 0)),
+              ]);
+              if (!tbeOn) return col;
+              return Stack(clipBehavior: Clip.none, children: [
+                col,
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      size: Size.infinite,
+                      painter: _EdgePainter(
+                        top: tbTop,
+                        bottom: tbTop + 52 + tbeGap,
+                        r: uiStyles.n('tbe_r', 16),
+                        e: uiStyles.n('tbe_sh', 7),
+                        pad: 16,
+                        fm: uiStyles.n('tbe_fm', 6),
+                        float: uiStyles.n('tbe_float', 0) > .5,
+                      ),
+                    ),
+                  ),
+                ),
+              ]);
+            }
+
             Widget _canvas(BuildContext c, int rec, int pay, int net) {
               return LayoutBuilder(builder: (c, bc) {
                 final w = bc.maxWidth;
@@ -3031,13 +3075,8 @@ jobs:
                     edge: true,
                     fade: !uiStyles.of('home_contacts').glass,
                     bottomPad: MediaQuery.paddingOf(c).bottom,
-                    header: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        SizedBox(height: uiStyles.n('tb_top', 20)),
-                        _toolbar(c, notes),
-                        _canvas(c, rec, pay, net),
-                        offlineBanner(c),
-                        SizedBox(height: uiStyles.n('hdr_gap', 0)),
-                    ]),
+                    floatH: _canvasH() + uiStyles.n('hdr_gap', 0),
+                    header: _headerBlock(c, notes, rec, pay, net),
                     children: [
                         SizedBox(height: math.max(0.0, kPeopleBase + dy)),
                         _peopleGroup(
@@ -6305,6 +6344,7 @@ jobs:
             final double topPad;
             final double headerTop;
             final bool edge; // لبه‌های پایین هدر گرد و سایه‌دار، و لیست زیر آن پنهان می‌شود
+            final double floatH; // ارتفاع کادر زیرِ سه کادر (برای حالت شناور)
             final double bottomPad;
             const FixedHeaderList(
                 {super.key,
@@ -6320,12 +6360,16 @@ jobs:
                 this.topPad = kFadeH,
                 this.headerTop = 8,
                 this.edge = false,
+                this.floatH = 0,
                 this.bottomPad = 100});
 
             @override
             Widget build(BuildContext context) {
+              final fl = edge && uiStyles.n('hdr_float', 0) > .5 && floatH > 0;
               final r = edge ? uiStyles.n('hdr_r', 16) : 0.0;
               final sh = edge ? uiStyles.n('hdr_sh', 7) : 0.0;
+              final fm = uiStyles.n('hdr_fm', 6);
+              final up = fl ? floatH : r;
               return LayoutBuilder(
                 builder: (c, bc) {
                   final list = RefreshIndicator(
@@ -6338,7 +6382,7 @@ jobs:
                             ? const NeverScrollableScrollPhysics()
                             : const AlwaysScrollableScrollPhysics(),
                         cacheExtent: 600,
-                        padding: EdgeInsets.fromLTRB(16, topPad + r, 16, bottomPad),
+                        padding: EdgeInsets.fromLTRB(16, topPad + up, 16, bottomPad),
                         itemCount: itemBuilder != null ? itemCount : children.length,
                         itemBuilder: (c, i) =>
                             RepaintBoundary(child: itemBuilder != null ? itemBuilder!(c, i) : children[i]),
@@ -6361,18 +6405,23 @@ jobs:
                               Positioned(
                                 left: 0,
                                 right: 0,
-                                top: -r,
+                                top: -up,
                                 bottom: 0,
                                 child: ClipPath(
-                                    clipper: _HdrClipper(r), clipBehavior: Clip.antiAlias, child: list),
+                                    clipper: _EdgeClipper(up, r, fl, fm),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: list),
                               ),
                               Positioned(
                                 left: 0,
                                 right: 0,
-                                top: -r,
+                                top: -up,
                                 bottom: 0,
                                 child: IgnorePointer(
-                                    child: CustomPaint(painter: _HdrShadowPainter(r, sh), size: Size.infinite)),
+                                    child: CustomPaint(
+                                        painter: _EdgePainter(
+                                            top: 0, bottom: up, r: r, e: sh, pad: 0, fm: fm, float: fl),
+                                        size: Size.infinite)),
                               ),
                             ]),
                     ),
@@ -6382,38 +6431,63 @@ jobs:
             }
           }
 
-          Path _hdrShape(double w, double r) => Path()
-            ..addRRect(RRect.fromLTRBAndCorners(-20, -400, w + 20, r,
-                bottomLeft: Radius.circular(r), bottomRight: Radius.circular(r)));
-
-          /// ناحیهٔ دیدنی لیست = همهٔ فضا منهای هدر گرد (هر چه زیر هدر برود پنهان می‌شود)
-          class _HdrClipper extends CustomClipper<Path> {
-            final double r;
-            _HdrClipper(this.r);
-            @override
-            Path getClip(Size size) => Path.combine(PathOperation.difference,
-                Path()..addRect(Offset.zero & size), _hdrShape(size.width, r));
-            @override
-            bool shouldReclip(_HdrClipper old) => old.r != r;
+          /// شکل کادر لبه‌دار: حالت عادی = از بالا تا لبهٔ پایین با دو گوشهٔ پایین گرد؛ حالت شناور = مستطیل گرد با فاصله از دو طرف
+          Path _edgeShape(double w, double top, double bottom, double r, bool float, double fm,
+              {double pad = 0}) {
+            if (float) {
+              final left = fm - pad, right = w + pad - fm;
+              final rr = math.max(0.0, math.min(r, math.min((bottom - top) / 2, (right - left) / 2)));
+              return Path()
+                ..addRRect(RRect.fromLTRBR(left, top, right, bottom, Radius.circular(rr)));
+            }
+            final rr = math.max(0.0, math.min(r, 380.0));
+            return Path()
+              ..addRRect(RRect.fromLTRBAndCorners(-pad - 20, top - 400, w + pad + 20, bottom,
+                  bottomLeft: Radius.circular(rr), bottomRight: Radius.circular(rr)));
           }
 
-          /// سایهٔ نرم لبهٔ پایین هدر
-          class _HdrShadowPainter extends CustomPainter {
-            final double r, e;
-            _HdrShadowPainter(this.r, this.e);
+          /// ناحیهٔ دیدنی لیست = همهٔ فضا منهای کادر لبه‌دار (هر چه زیر آن برود پنهان می‌شود)
+          class _EdgeClipper extends CustomClipper<Path> {
+            final double up, r, fm;
+            final bool float;
+            _EdgeClipper(this.up, this.r, this.float, this.fm);
+            @override
+            Path getClip(Size size) => Path.combine(PathOperation.difference,
+                Path()..addRect(Offset.zero & size), _edgeShape(size.width, 0, up, r, float, fm));
+            @override
+            bool shouldReclip(_EdgeClipper old) =>
+                old.up != up || old.r != r || old.float != float || old.fm != fm;
+          }
+
+          /// سایهٔ نرم لبهٔ کادر
+          class _EdgePainter extends CustomPainter {
+            final double top, bottom, r, e, pad, fm;
+            final bool float;
+            _EdgePainter(
+                {required this.top,
+                required this.bottom,
+                required this.r,
+                required this.e,
+                required this.pad,
+                required this.fm,
+                required this.float});
             @override
             void paint(Canvas canvas, Size size) {
               if (e <= 0) return;
-              final shape = _hdrShape(size.width, r);
+              final shape = _edgeShape(size.width, top, bottom, r, float, fm, pad: pad);
+              final bound = float
+                  ? Rect.fromLTRB(-pad - 80, top - 80, size.width + pad + 80, bottom + 80)
+                  : Rect.fromLTRB(-pad - 80, 0, size.width + pad + 80, size.height + 80);
               canvas.save();
-              canvas.clipPath(Path.combine(PathOperation.difference,
-                  Path()..addRect(Offset.zero & size), shape));
+              canvas.clipPath(Path.combine(PathOperation.difference, Path()..addRect(bound), shape));
               canvas.drawShadow(shape, Colors.black.withValues(alpha: .85), e, false);
               canvas.restore();
             }
 
             @override
-            bool shouldRepaint(_HdrShadowPainter old) => old.r != r || old.e != e;
+            bool shouldRepaint(_EdgePainter o) =>
+                o.top != top || o.bottom != bottom || o.r != r || o.e != e || o.pad != pad ||
+                o.fm != fm || o.float != float;
           }
 
           // ---------- ترتیب الفبایی فارسی ----------
@@ -6587,29 +6661,55 @@ jobs:
                 );
           }
 
-          class HeaderEdgeEditor extends StatelessWidget {
-            const HeaderEdgeEditor({super.key});
+          /// تنظیمات لبه و سایه (برای زیر کادرهای بالا با پیشوند hdr و زیر نوار ابزار با پیشوند tbe)
+          class EdgeEditor extends StatelessWidget {
+            final String p;
+            final String gapLabel;
+            const EdgeEditor(this.p, {super.key, required this.gapLabel});
+
             @override
             Widget build(BuildContext context) => ListenableBuilder(
                   listenable: uiStyles,
-                  builder: (c, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text(
-                        'ناحیه‌ای که کادرهای اشخاص هنگام اسکرول زیر آن پنهان می‌شوند (زیر سه کادر بالا)',
-                        style: TextStyle(fontSize: 12)),
-                    _nSlider('قوی یا ملایم بودن سایه (۰ = بدون سایه)', 'hdr_sh', 7, 0, 20, icon: Icons.filter_drama),
-                    _nSlider('گردی لبه‌های پایین (۰ = صاف)', 'hdr_r', 16, 0, 40, icon: Icons.rounded_corner),
-                    _nSlider('فاصلهٔ لبهٔ کادر زیرین تا کادرهای وام و چک (۰ = چسبیده)', 'hdr_gap', 0, 0, 60,
-                        icon: Icons.height),
-                    Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: TextButton.icon(
-                        onPressed: () => uiStyles.resetN('hdr_'),
-                        icon: const Icon(Icons.restart_alt),
-                        label: const Text('بازگشت به پیش‌فرض'),
+                  builder: (c, _) {
+                    final fl = uiStyles.n('${p}_float', 0) > .5;
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _nSlider('قوی یا ملایم بودن سایه (۰ = بدون سایه)', '${p}_sh', 7, 0, 20,
+                          icon: Icons.filter_drama),
+                      _nSlider('گردی لبه‌ها (۰ = صاف)', '${p}_r', 16, 0, 100, icon: Icons.rounded_corner),
+                      _nSlider(gapLabel, '${p}_gap', 0, 0, 60, icon: Icons.height),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        secondary: const Icon(Icons.layers_outlined),
+                        title: const Text('حالت شناور (مثل نوار پایین)',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: const Text('کادر از لبه‌های صفحه جدا می‌شود و چهار گوشه‌اش گرد می‌شود'),
+                        value: fl,
+                        onChanged: (v) => uiStyles.setN('${p}_float', v == true ? 1 : 0),
                       ),
-                    ),
-                  ]),
+                      if (fl)
+                        _nSlider('فاصله از دو لبهٔ صفحه', '${p}_fm', 6, 0, 40, icon: Icons.swap_horiz),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          onPressed: () => uiStyles.resetN('${p}_'),
+                          icon: const Icon(Icons.restart_alt),
+                          label: const Text('بازگشت به پیش‌فرض'),
+                        ),
+                      ),
+                    ]);
+                  },
                 );
+          }
+
+          class HeaderEdgeEditor extends StatelessWidget {
+            const HeaderEdgeEditor({super.key});
+            @override
+            Widget build(BuildContext context) => const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('ناحیه‌ای که کادرهای اشخاص هنگام اسکرول زیر آن پنهان می‌شوند (زیر سه کادر بالا)',
+                      style: TextStyle(fontSize: 12)),
+                  EdgeEditor('hdr', gapLabel: 'فاصلهٔ لبهٔ کادر زیرین تا کادرهای وام و چک (۰ = چسبیده)'),
+                ]);
           }
 
           class ToolbarEditor extends StatelessWidget {
@@ -6623,6 +6723,17 @@ jobs:
                   const StyleEditor('home_toolbar', glass: true, border: true, textSize: false, opMin: 0),
                   _nSlider('گردی لبه‌های کادر', 'tb_radius', 18, 0, 40, icon: Icons.rounded_corner),
                   _nSlider('فاصله از بالا (۰ = درست زیر دوربین)', 'tb_top', 20, 0, 60, icon: Icons.vertical_align_top),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    secondary: const Icon(Icons.vertical_align_bottom),
+                    title: const Text('لبه و سایه زیر نوار ابزار', style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text('با تیک زدن، زیر نوار ابزار کادری با لبهٔ گرد و سایه ساخته می‌شود'),
+                    value: uiStyles.n('tbe_on', 0) > .5,
+                    onChanged: (v) => uiStyles.setN('tbe_on', v == true ? 1 : 0),
+                  ),
+                  if (uiStyles.n('tbe_on', 0) > .5)
+                    const EdgeEditor('tbe', gapLabel: 'فاصلهٔ لبهٔ این کادر تا نوار ابزار'),
                   const Divider(),
                   const Text('اندازه و جای عناصر داخل نوار ابزار',
                       style: TextStyle(fontWeight: FontWeight.bold)),
@@ -7081,7 +7192,15 @@ jobs:
           /// تنظیمات خط دور لیست اشخاص (سه‌طرفه: بالا، چپ، راست)
           class FrameEditor extends StatelessWidget {
             final String k;
-            const FrameEditor(this.k, {super.key});
+            final String title;
+            final String subtitle;
+            final IconData icon;
+            const FrameEditor(this.k,
+                {super.key,
+                this.title = 'خط دور قاب کل اشخاص',
+                this.subtitle =
+                    'از زیر کادرهای وام‌ها و چک‌ها شروع می‌شود، دور اشخاص می‌چرخد و تا پایین صفحه ادامه دارد (بدون خط پایین)',
+                this.icon = Icons.border_top});
 
             @override
             Widget build(BuildContext context) {
@@ -7093,9 +7212,9 @@ jobs:
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       controlAffinity: ListTileControlAffinity.leading,
-                      secondary: const Icon(Icons.border_top),
-                      title: const Text('خط دور کادر اشخاص', style: TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: const Text('از زیر کادرهای وام‌ها و چک‌ها شروع می‌شود، دور اشخاص می‌چرخد و تا پایین صفحه ادامه دارد (بدون خط پایین)'),
+                      secondary: Icon(icon),
+                      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(subtitle),
                       value: s.border,
                       onChanged: (v) => uiStyles.change(k, (x) => x.border = v ?? false),
                     ),
@@ -7220,6 +7339,11 @@ jobs:
                             const RadiusEditor('rad_home_pframe',
                                 def: 26, label: 'گردی لبه‌های قاب کل اشخاص'),
                           if (k == 'contacts') const SquareEditor(),
+                          if (k == 'contacts')
+                            const FrameEditor('home_contacts',
+                                title: 'خط دور کادر هر شخص',
+                                subtitle: 'دور هر کادر شخص (مستطیلی یا مربعی) خط کشیده می‌شود؛ با برداشتن تیک حذف می‌شود',
+                                icon: Icons.crop_square),
                           if (k == 'contacts') const FrameEditor('home_pframe'),
                           StyleEditor('home_$k',
                               glass: true,
