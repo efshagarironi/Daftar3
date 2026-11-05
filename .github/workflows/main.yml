@@ -3036,6 +3036,7 @@ jobs:
                         _toolbar(c, notes),
                         _canvas(c, rec, pay, net),
                         offlineBanner(c),
+                        SizedBox(height: uiStyles.n('hdr_gap', 0)),
                     ]),
                     children: [
                         SizedBox(height: math.max(0.0, kPeopleBase + dy)),
@@ -6597,6 +6598,8 @@ jobs:
                         style: TextStyle(fontSize: 12)),
                     _nSlider('قوی یا ملایم بودن سایه (۰ = بدون سایه)', 'hdr_sh', 7, 0, 20, icon: Icons.filter_drama),
                     _nSlider('گردی لبه‌های پایین (۰ = صاف)', 'hdr_r', 16, 0, 40, icon: Icons.rounded_corner),
+                    _nSlider('فاصلهٔ لبهٔ کادر زیرین تا کادرهای وام و چک (۰ = چسبیده)', 'hdr_gap', 0, 0, 60,
+                        icon: Icons.height),
                     Align(
                       alignment: AlignmentDirectional.centerStart,
                       child: TextButton.icon(
