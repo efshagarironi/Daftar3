@@ -2155,11 +2155,133 @@ jobs:
           }
 
           // ---------- home shell ----------
+          class AddOpt {
+            final IconData icon;
+            final String label;
+            final Color color;
+            final VoidCallback onTap;
+            const AddOpt(this.icon, this.label, this.color, this.onTap);
+          }
+
+          /// دکمهٔ مربعی گرد «+» : با لمس، محو می‌شود و گزینه‌ها از پایین به بالا باز می‌شوند
+          class AddFab extends StatefulWidget {
+            final List<AddOpt> options; // اولی نزدیک‌ترین به دکمه (پایین‌ترین)
+            final Color? color;
+            final IconData icon;
+            const AddFab({super.key, required this.options, this.color, this.icon = Icons.add});
+            @override
+            State<AddFab> createState() => _AddFabState();
+          }
+
+          class _AddFabState extends State<AddFab> {
+            final GlobalKey _key = GlobalKey();
+            bool _hidden = false;
+
+            Future<void> _open() async {
+              final box = _key.currentContext?.findRenderObject() as RenderBox?;
+              if (box == null || _hidden) return;
+              final pos = box.localToGlobal(Offset.zero);
+              final size = box.size;
+              final screen = MediaQuery.of(context).size;
+              final onRight = pos.dx > screen.width / 2;
+              setState(() => _hidden = true);
+              await showGeneralDialog<void>(
+                context: context,
+                barrierDismissible: true,
+                barrierLabel: 'بستن',
+                barrierColor: Colors.black38,
+                transitionDuration: const Duration(milliseconds: 300),
+                pageBuilder: (c, a, b) => const SizedBox.shrink(),
+                transitionBuilder: (ctx, a, b, _) {
+                  final n = widget.options.length;
+                  final items = <Widget>[];
+                  for (var k = n - 1; k >= 0; k--) {
+                    final o = widget.options[k];
+                    final anim = CurvedAnimation(
+                        parent: a,
+                        curve: Interval(.12 * k, math.min(1.0, .12 * k + .6), curve: Curves.easeOutCubic),
+                        reverseCurve: Curves.easeIn);
+                    items.add(FadeTransition(
+                      opacity: anim,
+                      child: SlideTransition(
+                        position: anim.drive(Tween<Offset>(begin: const Offset(0, .8), end: Offset.zero)),
+                        child: Padding(
+                          padding: EdgeInsets.only(top: k == n - 1 ? 0 : 12),
+                          child: Material(
+                            color: o.color,
+                            elevation: 4,
+                            borderRadius: BorderRadius.circular(18),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(18),
+                              onTap: () {
+                                Navigator.of(ctx).pop();
+                                o.onTap();
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Icon(o.icon, color: Colors.white),
+                                  const SizedBox(width: 10),
+                                  Text(o.label,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                          decoration: TextDecoration.none)),
+                                ]),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ));
+                  }
+                  return Stack(children: [
+                    Positioned(
+                      left: onRight ? null : pos.dx,
+                      right: onRight ? screen.width - (pos.dx + size.width) : null,
+                      bottom: screen.height - (pos.dy + size.height),
+                      child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: onRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                          children: items),
+                    ),
+                  ]);
+                },
+              );
+              if (mounted) setState(() => _hidden = false);
+            }
+
+            @override
+            Widget build(BuildContext context) => AnimatedOpacity(
+                  opacity: _hidden ? 0 : 1,
+                  duration: const Duration(milliseconds: 150),
+                  child: IgnorePointer(
+                    ignoring: _hidden,
+                    child: FloatingActionButton(
+                      key: _key,
+                      heroTag: null,
+                      backgroundColor: widget.color,
+                      foregroundColor: widget.color == null ? null : Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                      onPressed: _open,
+                      child: Icon(widget.icon, size: 30),
+                    ),
+                  ),
+                );
+          }
+
           class Home extends StatefulWidget {
             const Home({super.key});
             @override
             State<Home> createState() => _HomeState();
           }
+
+          const _navItems = [
+            NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'خانه'),
+            NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
+            NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
+          ];
 
           class _HomeState extends State<Home> with WidgetsBindingObserver {
             int i = 0;
@@ -2196,7 +2318,7 @@ jobs:
 
             @override
             Widget build(BuildContext context) => GlassFrame(
-                keys: i == 0 ? const ['home_toolbar', 'home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : const [],
+                keys: i == 0 ? const ['home_nav', 'home_toolbar', 'home_hero', 'home_loans', 'home_cheques', 'home_contacts'] : const [],
                 child: PopScope(
                     canPop: i == 0,
                     onPopInvokedWithResult: (didPop, result) {
@@ -2218,18 +2340,41 @@ jobs:
                 floatingActionButton: i == 0
                     ? ListenableBuilder(
                         listenable: uiStyles,
-                        builder: (c, _) => FloatingActionButton.extended(
-                            backgroundColor: Color(uiStyles.bgOf('fab') ?? 0xFF4A90E8),
-                            foregroundColor: Colors.white,
-                            shape: const StadiumBorder(),
-                            onPressed: () => openAccountForm(context),
-                            icon: const Icon(Icons.add_circle_outline),
-                            label: const Text('ثبت حساب')))
+                        builder: (c, _) => AddFab(
+                              color: Color(uiStyles.bgOf('fab') ?? 0xFF4A90E8),
+                              icon: Icons.add,
+                              options: [
+                                AddOpt(Icons.add_circle_outline, 'حساب جدید', _kBlue,
+                                    () => openAccountForm(context)),
+                                AddOpt(Icons.account_balance, 'ثبت وام', _kIndigo,
+                                    () => Navigator.push(context, FastRoute(builder: (_) => const LoanFormPage()))),
+                                AddOpt(Icons.receipt_long, 'ثبت چک', _kRose,
+                                    () => Navigator.push(context, FastRoute(builder: (_) => const ChequeFormPage()))),
+                              ],
+                            ))
                     : null,
                 bottomNavigationBar: ListenableBuilder(
                   listenable: uiStyles,
                   builder: (c, _) {
                     final inset = MediaQuery.viewPaddingOf(c).bottom;
+                    final ns = uiStyles.of('home_nav');
+                    final order = uiStyles.navOrder;
+                    final r = BorderRadius.circular(uiStyles.n('nav_r', 20));
+                    final baseCol = uiStyles.bgOf('navbar') == null ? null : Color(uiStyles.bgOf('navbar')!);
+                    final bar = MediaQuery.removePadding(
+                      context: c,
+                      removeBottom: true,
+                      child: NavigationBar(
+                        height: uiStyles.n('nav_h', 80),
+                        backgroundColor: ns.glass
+                            ? (baseCol ?? Theme.of(c).colorScheme.surfaceContainer).withValues(alpha: .4)
+                            : baseCol,
+                        surfaceTintColor: Colors.transparent,
+                        selectedIndex: order.indexOf(i),
+                        onDestinationSelected: (v) => setState(() => i = order[v]),
+                        destinations: [for (final k in order) _navItems[k]],
+                      ),
+                    );
                     return Padding(
                       padding: EdgeInsets.only(bottom: inset + uiStyles.n('nav_lift', 10)),
                       child: Align(
@@ -2237,23 +2382,23 @@ jobs:
                         alignment: Alignment.center,
                         child: FractionallySizedBox(
                           widthFactor: uiStyles.n('nav_w', .95).clamp(.5, 1.0).toDouble(),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(uiStyles.n('nav_r', 20)),
-                            child: MediaQuery.removePadding(
-                              context: c,
-                              removeBottom: true,
-                              child: NavigationBar(
-                  height: uiStyles.n('nav_h', 80),
-                  backgroundColor: uiStyles.bgOf('navbar') == null ? null : Color(uiStyles.bgOf('navbar')!),
-                  surfaceTintColor: Colors.transparent,
-                  selectedIndex: i,
-                  onDestinationSelected: (v) => setState(() => i = v),
-                  destinations: const [
-                    NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'خانه'),
-                    NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: 'پشتیبان'),
-                    NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
-                  ],
-                              ),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: r,
+                              border: ns.border
+                                  ? Border.all(
+                                      color: (ns.bc != null ? Color(ns.bc!) : Theme.of(c).colorScheme.primary)
+                                          .withValues(alpha: ns.bo),
+                                      width: ns.bw)
+                                  : (ns.glass
+                                      ? Border.all(color: Colors.white.withValues(alpha: .45), width: 1.2)
+                                      : null),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: r,
+                              child: ns.glass
+                                  ? BackdropFilter(filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14), child: bar)
+                                  : bar,
                             ),
                           ),
                         ),
@@ -3504,10 +3649,15 @@ jobs:
                         StyleGroup('pers_card', 'کادر حساب‌های شخص', compress: true),
                       ], bgKey: 'pers'),
                     ]),
-                    floatingActionButton: FloatingActionButton.extended(
-                        onPressed: () => openAccountForm(c, contactId: id),
-                        icon: const Icon(Icons.add),
-                        label: const Text('حساب جدید')),
+                    floatingActionButton: AddFab(
+                      icon: Icons.add_circle_outline,
+                      options: [
+                        AddOpt(Icons.add_circle_outline, 'حساب جدید', _kBlue,
+                            () => openAccountForm(c, contactId: id)),
+                        AddOpt(Icons.receipt_long, 'ثبت چک', _kRose,
+                            () => Navigator.push(c, FastRoute(builder: (_) => ChequeFormPage(initContact: id)))),
+                      ],
+                    ),
                     body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
                       cardBox(
                           c,
@@ -5043,7 +5193,8 @@ jobs:
           class ChequeFormPage extends StatefulWidget {
             final Cheque? edit;
             final String initDir;
-            const ChequeFormPage({super.key, this.edit, this.initDir = 'received'});
+            final String? initContact;
+            const ChequeFormPage({super.key, this.edit, this.initDir = 'received', this.initContact});
             @override
             State<ChequeFormPage> createState() => _ChequeFormPageState();
           }
@@ -5079,6 +5230,8 @@ jobs:
                 branch.text = e.branch;
                 amount.text = '${e.amount}';
                 notes.text = '${e.m['notes'] ?? ''}';
+              } else if (widget.initContact != null) {
+                cid = widget.initContact;
               } else if (store.contacts.isEmpty) {
                 cid = 'new';
               }
@@ -5322,6 +5475,15 @@ jobs:
               await _save();
             }
 
+            // ترتیب آیکون‌های نوار پایین (۰ خانه، ۱ پشتیبان، ۲ تنظیمات)
+            List<int> navOrder = [0, 1, 2];
+
+            Future<void> setNavOrder(List<int> o) async {
+              navOrder = o;
+              notifyListeners();
+              await _save();
+            }
+
             // حالت مربعی کادر اشخاص در صفحهٔ خانه
             bool sqMode = false;
             int sqCols = 3; // تعداد مربع در هر ردیف
@@ -5415,6 +5577,8 @@ jobs:
                   bgs.forEach((k, v) => _bg['$k'] = (v as num).toInt());
                   final nn = (j['n'] as Map?) ?? {};
                   nn.forEach((k, v) => _n['$k'] = (v as num).toDouble());
+                  final no = ((j['nav'] as List?) ?? []).map((e) => (e as num).toInt()).toList();
+                  if (no.length == 3 && no.toSet().length == 3 && no.every((e) => e >= 0 && e < 3)) navOrder = no;
                   final sq = (j['sq'] as Map?) ?? {};
                   sqMode = sq['on'] == true;
                   sqCols = ((sq['cols'] ?? 3) as num).toInt().clamp(1, 6);
@@ -5434,6 +5598,7 @@ jobs:
                       'rects': _r,
                       'bg': _bg,
                       'n': _n,
+                      'nav': navOrder,
                       'sq': {'on': sqMode, 'cols': sqCols, 'rows': sqRows, 'scale': sqScale},
                     }));
               } catch (_) {}
@@ -6296,6 +6461,73 @@ jobs:
             }
           }
 
+          /// جابه‌جایی جای آیکون‌های نوار پایین: یک آیکون را انتخاب کنید و روی آیکون دیگر بزنید
+          class NavOrderEditor extends StatefulWidget {
+            const NavOrderEditor({super.key});
+            @override
+            State<NavOrderEditor> createState() => _NavOrderEditorState();
+          }
+
+          class _NavOrderEditorState extends State<NavOrderEditor> {
+            int? sel; // جایگاه انتخاب‌شده
+
+            @override
+            Widget build(BuildContext context) {
+              final pc = Theme.of(context).colorScheme.primary;
+              return ListenableBuilder(
+                listenable: uiStyles,
+                builder: (c, _) {
+                  final order = uiStyles.navOrder;
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    _optTitle(Icons.swap_horiz, 'جای آیکون‌های نوار پایین'),
+                    const SizedBox(height: 4),
+                    const Text('یک آیکون را انتخاب کنید و سپس روی آیکون دیگر بزنید تا جایشان عوض شود.',
+                        style: TextStyle(fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      for (var pos = 0; pos < 3; pos++)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                if (sel == null) {
+                                  setState(() => sel = pos);
+                                } else if (sel == pos) {
+                                  setState(() => sel = null);
+                                } else {
+                                  final o = List<int>.from(order);
+                                  final t = o[sel!];
+                                  o[sel!] = o[pos];
+                                  o[pos] = t;
+                                  setState(() => sel = null);
+                                  uiStyles.setNavOrder(o);
+                                }
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                  color: sel == pos ? pc.withValues(alpha: .15) : null,
+                                  border: Border.all(color: sel == pos ? pc : Colors.grey, width: sel == pos ? 2.5 : 1),
+                                ),
+                                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                  (_navItems[order[pos]].icon as Icon),
+                                  const SizedBox(height: 4),
+                                  Text(_navItems[order[pos]].label, style: const TextStyle(fontSize: 12)),
+                                ]),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ]),
+                  ]);
+                },
+              );
+            }
+          }
+
           class NavBarEditor extends StatelessWidget {
             const NavBarEditor({super.key});
 
@@ -6310,10 +6542,41 @@ jobs:
                   _nSlider('ارتفاع نوار', 'nav_h', 80, 56, 120, icon: Icons.height),
                   _nSlider('فاصله از پایین (بالا/پایین بردن)', 'nav_lift', 10, 0, 160,
                       icon: Icons.vertical_align_bottom),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.blur_on),
+                    title: const Text('حالت شیشه‌ای', style: TextStyle(fontWeight: FontWeight.bold)),
+                    value: uiStyles.of('home_nav').glass,
+                    onChanged: (v) => uiStyles.change('home_nav', (x) => x.glass = v),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.border_outer),
+                    title: const Text('خط دور کادر', style: TextStyle(fontWeight: FontWeight.bold)),
+                    value: uiStyles.of('home_nav').border,
+                    onChanged: (v) => uiStyles.change('home_nav', (x) => x.border = v),
+                  ),
+                  if (uiStyles.of('home_nav').border) ...[
+                    _sliderNum('ضخامت خط', uiStyles.of('home_nav').bw, .5, 8,
+                        (v) => uiStyles.change('home_nav', (x) => x.bw = v),
+                        icon: Icons.line_weight),
+                    _colorRow(c, 'رنگ خط', uiStyles.of('home_nav').bc,
+                        (v) => uiStyles.change('home_nav', (x) => x.bc = v),
+                        icon: Icons.border_color),
+                    _sliderRow('شفافیت خط', uiStyles.of('home_nav').bo, .1, 1,
+                        (v) => uiStyles.change('home_nav', (x) => x.bo = v),
+                        icon: Icons.opacity),
+                  ],
+                  const Divider(),
+                  const NavOrderEditor(),
                   Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: TextButton.icon(
-                      onPressed: () => uiStyles.resetN('nav_'),
+                      onPressed: () {
+                        uiStyles.resetN('nav_');
+                        uiStyles.reset(['home_nav']);
+                        uiStyles.setNavOrder([0, 1, 2]);
+                      },
                       icon: const Icon(Icons.restart_alt),
                       label: const Text('بازگشت نوار پایین به پیش‌فرض'),
                     ),
