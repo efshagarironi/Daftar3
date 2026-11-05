@@ -1883,6 +1883,100 @@ jobs:
               ),
             );
           }
+          // ---------- آکاردئون تنظیمات: همیشه فقط یک منو باز است ----------
+          class AccSection {
+            final IconData? icon;
+            final String title;
+            final Widget child;
+            const AccSection(this.icon, this.title, this.child);
+          }
+
+          /// کادر اصلی (پررنگ) برای گزینه‌های مستقیم مثل «پس‌زمینه» که منوی بازشدنی ندارند
+          Widget mainAction(BuildContext c, Widget child) {
+            final cs = Theme.of(c).colorScheme;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Material(
+                color: mainFill(c),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    side: BorderSide(color: cs.primary.withAlpha(110), width: 1.2)),
+                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2), child: child),
+              ),
+            );
+          }
+
+          class ExclusiveAccordion extends StatefulWidget {
+            final List<AccSection> sections;
+            final bool nested; // false: کادر اصلی پررنگ ، true: زیرمجموعهٔ کم‌رنگ
+            const ExclusiveAccordion({super.key, required this.sections, this.nested = false});
+            @override
+            State<ExclusiveAccordion> createState() => _ExclusiveAccordionState();
+          }
+
+          class _ExclusiveAccordionState extends State<ExclusiveAccordion> {
+            int? _open;
+
+            @override
+            Widget build(BuildContext context) {
+              final cs = Theme.of(context).colorScheme;
+              final nested = widget.nested;
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                for (int i = 0; i < widget.sections.length; i++)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: nested ? 6 : 10),
+                    child: Material(
+                      color: nested ? subFill(context) : mainFill(context),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(nested ? 14 : 18),
+                          side: BorderSide(
+                              color: cs.primary.withAlpha(nested ? 40 : (_open == i ? 170 : 110)),
+                              width: nested ? .8 : 1.2)),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        InkWell(
+                          onTap: () => setState(() => _open = _open == i ? null : i),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 14, vertical: nested ? 10 : 14),
+                            child: Row(children: [
+                              if (widget.sections[i].icon != null) ...[
+                                Icon(widget.sections[i].icon, color: nested ? null : cs.primary),
+                                const SizedBox(width: 10),
+                              ],
+                              Expanded(
+                                  child: Text(widget.sections[i].title,
+                                      style: TextStyle(
+                                          fontWeight: nested ? FontWeight.w600 : FontWeight.w800,
+                                          fontSize: nested ? 14 : 15.5))),
+                              AnimatedRotation(
+                                  turns: _open == i ? .5 : 0,
+                                  duration: const Duration(milliseconds: 180),
+                                  child: const Icon(Icons.expand_more)),
+                            ]),
+                          ),
+                        ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 180),
+                          alignment: Alignment.topCenter,
+                          child: _open == i
+                              ? Padding(
+                                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                                  child: Material(
+                                    color: nested
+                                        ? Color.alphaBlend(cs.primary.withAlpha(8), cs.surface)
+                                        : subFill(context),
+                                    borderRadius: BorderRadius.circular(nested ? 12 : 14),
+                                    child: Padding(padding: const EdgeInsets.fromLTRB(10, 6, 10, 6), child: widget.sections[i].child),
+                                  ),
+                                )
+                              : const SizedBox(width: double.infinity),
+                        ),
+                      ]),
+                    ),
+                  ),
+              ]);
+            }
+          }
           Widget sec(BuildContext c, String t) => Padding(
                 padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
                 child: Text(t,
@@ -7281,20 +7375,18 @@ jobs:
                     onChanged: (v) => uiStyles.setN(k, v)),
               ]);
 
-          /// گروه اندازه + جابه‌جایی افقی و عمودی یک عنصر
-          Widget _elemGroup(String title, String prefix, {double dx = 0, bool pct = false, double move = 80}) =>
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
-                title: Text(title),
-                children: [
-                  _nSlider('اندازه', '${prefix}_s', 1, .5, 2.2, pct: true, icon: Icons.zoom_out_map),
-                  _nSlider('جای افقی (راست/چپ)', '${prefix}_dx', dx, -move, move,
-                      pct: pct, icon: Icons.swap_horiz),
-                  _nSlider('جای عمودی (بالا/پایین)', '${prefix}_dy', 0, -move, move,
-                      pct: pct, icon: Icons.swap_vert),
-                ],
-              );
+          /// گروه اندازه + جابه‌جایی افقی و عمودی یک عنصر (به‌صورت بخش آکاردئون)
+          AccSection _elemGroup(String title, String prefix, {double dx = 0, bool pct = false, double move = 80}) =>
+              AccSection(
+                  null,
+                  title,
+                  Column(children: [
+                    _nSlider('اندازه', '${prefix}_s', 1, .5, 2.2, pct: true, icon: Icons.zoom_out_map),
+                    _nSlider('جای افقی (راست/چپ)', '${prefix}_dx', dx, -move, move,
+                        pct: pct, icon: Icons.swap_horiz),
+                    _nSlider('جای عمودی (بالا/پایین)', '${prefix}_dy', 0, -move, move,
+                        pct: pct, icon: Icons.swap_vert),
+                  ]));
 
           class RadiusEditor extends StatelessWidget {
             final String k;
@@ -7397,11 +7489,13 @@ jobs:
                   const Divider(),
                   const Text('اندازه و جای عناصر داخل نوار ابزار',
                       style: TextStyle(fontWeight: FontWeight.bold)),
-                  _elemGroup('آیکون تقویم', 'tb_cal'),
-                  _elemGroup('تاریخ', 'tb_date'),
-                  _elemGroup('آیکون پیام‌ها (زنگوله)', 'tb_bell'),
-                  _elemGroup('دکمهٔ ذخیره آنلاین', 'tb_save'),
-                  _elemGroup('آیکون چرخ‌دنده', 'tb_gear', dx: -10),
+                  ExclusiveAccordion(nested: true, sections: [
+                    _elemGroup('آیکون تقویم', 'tb_cal'),
+                    _elemGroup('تاریخ', 'tb_date'),
+                    _elemGroup('آیکون پیام‌ها (زنگوله)', 'tb_bell'),
+                    _elemGroup('دکمهٔ ذخیره آنلاین', 'tb_save'),
+                    _elemGroup('آیکون چرخ‌دنده', 'tb_gear', dx: -10),
+                  ]),
                   Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: TextButton.icon(
@@ -7798,9 +7892,11 @@ jobs:
                         icon: Icons.photo_size_select_small),
                     const Text('اندازه و جای محتوای داخل مربع‌ها (جابه‌جایی نسبت به اندازهٔ مربع)',
                         style: TextStyle(fontWeight: FontWeight.bold)),
-                    _elemGroup('نام اشخاص', 'sq_name', pct: true, move: .4),
-                    _elemGroup('ارقام طلب و بدهی', 'sq_amt', pct: true, move: .4),
-                    _elemGroup('آیکون‌های داخل مربع', 'sq_ic', pct: true, move: .4),
+                    ExclusiveAccordion(nested: true, sections: [
+                      _elemGroup('نام اشخاص', 'sq_name', pct: true, move: .4),
+                      _elemGroup('ارقام طلب و بدهی', 'sq_amt', pct: true, move: .4),
+                      _elemGroup('آیکون‌های داخل مربع', 'sq_ic', pct: true, move: .4),
+                    ]),
                     Align(
                       alignment: AlignmentDirectional.centerStart,
                       child: TextButton.icon(
@@ -7945,109 +8041,83 @@ jobs:
                       const SizedBox(width: 8),
                       Expanded(
                           child: Text('تنظیمات ظاهر صفحه خانه',
-                              style: Theme.of(ctx)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold))),
+                              style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold))),
                     ]),
-                    const SizedBox(height: 8),
-                    bgTile(ctx, 'home'),
-                    alertSettingsTile(ctx),
-                    bgTile(ctx, 'fab', title: 'رنگ کادر اضافه کردن اشخاص'),
-                    const ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      childrenPadding: EdgeInsets.only(bottom: 8),
-                      leading: Icon(Icons.animation),
-                      title: Text('افکت', style: TextStyle(fontWeight: FontWeight.bold)),
-                      children: [FxEditor()],
-                    ),
-                    const ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      childrenPadding: EdgeInsets.only(bottom: 8),
-                      leading: Icon(Icons.vertical_align_bottom),
-                      title: Text('لبه و سایهٔ زیر کادرهای بالا', style: TextStyle(fontWeight: FontWeight.bold)),
-                      children: [HeaderEdgeEditor()],
-                    ),
-                    const ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      childrenPadding: EdgeInsets.only(bottom: 8),
-                      leading: Icon(Icons.web_asset),
-                      title: Text('نوار ابزار', style: TextStyle(fontWeight: FontWeight.bold)),
-                      children: [ToolbarEditor()],
-                    ),
-                    const ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      childrenPadding: EdgeInsets.only(bottom: 8),
-                      leading: Icon(Icons.call_to_action_outlined),
-                      title: Text('نوار پایین', style: TextStyle(fontWeight: FontWeight.bold)),
-                      children: [NavBarEditor()],
-                    ),
-                    const Divider(),
-                    Row(children: [
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            layoutEditRequest.value = 'home';
-                          },
-                          icon: const Icon(Icons.open_with),
-                          label: const Text('ویرایش چیدمان'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => uiStyles.resetLayout(),
-                          icon: const Icon(Icons.grid_view),
-                          label: const Text('بازنشانی چیدمان'),
-                        ),
-                      ),
+                    const SizedBox(height: 10),
+                    mainAction(ctx, bgTile(ctx, 'home')),
+                    mainAction(ctx, alertSettingsTile(ctx)),
+                    mainAction(ctx, bgTile(ctx, 'fab', title: 'رنگ کادر اضافه کردن اشخاص')),
+                    ExclusiveAccordion(sections: [
+                      AccSection(
+                          Icons.open_with,
+                          'چیدمان کادرها',
+                          Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                            Row(children: [
+                              Expanded(
+                                child: FilledButton.tonalIcon(
+                                  onPressed: () {
+                                    Navigator.pop(ctx);
+                                    layoutEditRequest.value = 'home';
+                                  },
+                                  icon: const Icon(Icons.open_with),
+                                  label: const Text('ویرایش چیدمان'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => uiStyles.resetLayout(),
+                                  icon: const Icon(Icons.grid_view),
+                                  label: const Text('بازنشانی چیدمان'),
+                                ),
+                              ),
+                            ]),
+                            const SizedBox(height: 6),
+                            Text('یا ۲ ثانیه روی یکی از کادرهای بالا نگه دارید. برای جابه‌جایی کل کادر اشخاص، ۲ ثانیه روی آن نگه دارید.',
+                                style: TextStyle(color: Theme.of(ctx).colorScheme.outline, fontSize: 12)),
+                          ])),
+                      const AccSection(Icons.animation, 'افکت', FxEditor()),
+                      const AccSection(Icons.vertical_align_bottom, 'لبه و سایهٔ زیر کادرهای بالا', HeaderEdgeEditor()),
+                      const AccSection(Icons.web_asset, 'نوار ابزار', ToolbarEditor()),
+                      const AccSection(Icons.call_to_action_outlined, 'نوار پایین', NavBarEditor()),
+                      for (final k in keys)
+                        AccSection(
+                            icons[k],
+                            names[k]!,
+                            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                              if (k != 'contacts') RectEditor(k),
+                              if (k == 'hero') const RadiusEditor('rad_home_hero', def: 26),
+                              if (k == 'loans') const RadiusEditor('rad_home_loans', def: 22),
+                              if (k == 'cheques') const RadiusEditor('rad_home_cheques', def: 22),
+                              if (k == 'contacts')
+                                const RadiusEditor('rad_home_contacts', def: 20, label: 'گردی لبه‌های کادر هر شخص'),
+                              if (k == 'contacts')
+                                const RadiusEditor('rad_home_pframe', def: 26, label: 'گردی لبه‌های قاب کل اشخاص'),
+                              if (k == 'contacts') const SquareEditor(),
+                              if (k == 'contacts')
+                                const FrameEditor('home_contacts',
+                                    title: 'خط دور کادر هر شخص',
+                                    subtitle: 'دور هر کادر شخص (مستطیلی یا مربعی) خط کشیده می‌شود؛ با برداشتن تیک حذف می‌شود',
+                                    icon: Icons.crop_square),
+                              if (k == 'contacts') const FrameEditor('home_pframe'),
+                              StyleEditor('home_$k',
+                                  glass: true,
+                                  border: k != 'contacts',
+                                  size: k == 'contacts',
+                                  sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
+                                  sizeMin: .2,
+                                  sizeMax: 1.6),
+                              Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: TextButton.icon(
+                                  onPressed: () => uiStyles
+                                      .reset(k == 'contacts' ? ['home_contacts', 'home_pframe'] : ['home_$k']),
+                                  icon: const Icon(Icons.restart_alt),
+                                  label: const Text('بازگشت ظاهر به پیش‌فرض'),
+                                ),
+                              ),
+                            ])),
                     ]),
-                    const SizedBox(height: 4),
-                    Text('یا ۲ ثانیه روی یکی از کادرهای بالا نگه دارید. برای جابه‌جایی کل کادر اشخاص، ۲ ثانیه روی آن نگه دارید.',
-                        style: TextStyle(color: Theme.of(ctx).colorScheme.outline, fontSize: 12)),
-                    const Divider(),
-                    for (final k in keys)
-                      ExpansionTile(
-                        tilePadding: EdgeInsets.zero,
-                        childrenPadding: const EdgeInsets.only(bottom: 8),
-                        leading: Icon(icons[k]),
-                        title: Text(names[k]!, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        children: [
-                          if (k != 'contacts') RectEditor(k),
-                          if (k == 'hero') const RadiusEditor('rad_home_hero', def: 26),
-                          if (k == 'loans') const RadiusEditor('rad_home_loans', def: 22),
-                          if (k == 'cheques') const RadiusEditor('rad_home_cheques', def: 22),
-                          if (k == 'contacts')
-                            const RadiusEditor('rad_home_contacts',
-                                def: 20, label: 'گردی لبه‌های کادر هر شخص'),
-                          if (k == 'contacts')
-                            const RadiusEditor('rad_home_pframe',
-                                def: 26, label: 'گردی لبه‌های قاب کل اشخاص'),
-                          if (k == 'contacts') const SquareEditor(),
-                          if (k == 'contacts')
-                            const FrameEditor('home_contacts',
-                                title: 'خط دور کادر هر شخص',
-                                subtitle: 'دور هر کادر شخص (مستطیلی یا مربعی) خط کشیده می‌شود؛ با برداشتن تیک حذف می‌شود',
-                                icon: Icons.crop_square),
-                          if (k == 'contacts') const FrameEditor('home_pframe'),
-                          StyleEditor('home_$k',
-                              glass: true,
-                              border: k != 'contacts',
-                              size: k == 'contacts',
-                              sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
-                              sizeMin: .2,
-                              sizeMax: 1.6),
-                          Align(
-                            alignment: AlignmentDirectional.centerStart,
-                            child: TextButton.icon(
-                              onPressed: () => uiStyles.reset(k == 'contacts' ? ['home_contacts', 'home_pframe'] : ['home_$k']),
-                              icon: const Icon(Icons.restart_alt),
-                              label: const Text('بازگشت ظاهر به پیش‌فرض'),
-                            ),
-                          ),
-                        ],
-                      ),
                   ]),
                 ),
               ),
@@ -8513,7 +8583,7 @@ jobs:
             }
           }
 
-          /// برگهٔ تنظیمات: ابتدا خط دور مشترک، بعد برای هر گروه کادر یک بخش جدا
+          /// برگهٔ تنظیمات: کادرهای اصلی (پررنگ) و زیرمجموعه‌ها (کم‌رنگ)؛ همیشه فقط یک منو باز است
           void showGroupsSheet(BuildContext c,
               {required String title,
               required List<StyleGroup> groups,
@@ -8534,70 +8604,60 @@ jobs:
                       const SizedBox(width: 8),
                       Expanded(
                           child: Text(title,
-                              style: Theme.of(ctx)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold))),
+                              style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold))),
                     ]),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     if (bgKey != null) ...[
-                      bgTile(ctx, bgKey),
+                      mainAction(ctx, bgTile(ctx, bgKey)),
                       if (const ['loans', 'cheq', 'accs_rec', 'accs_pay', 'accs_all', 'pers'].contains(bgKey))
-                        alertSettingsTile(ctx),
-                      const Divider(),
+                        mainAction(ctx, alertSettingsTile(ctx)),
                     ],
-                    if (layoutKey != null) ...[
-                      Row(children: [
-                        Expanded(
-                          child: FilledButton.tonalIcon(
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              layoutEditRequest.value = layoutKey;
-                            },
-                            icon: const Icon(Icons.open_with),
-                            label: const Text('ویرایش چیدمان'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => uiStyles.clearRects('$layoutKey.'),
-                            icon: const Icon(Icons.grid_view),
-                            label: const Text('بازنشانی چیدمان'),
-                          ),
-                        ),
-                      ]),
-                      const SizedBox(height: 4),
-                      Text('یا ۲ ثانیه روی هر کادر بالای صفحه نگه دارید.',
-                          style: TextStyle(color: Theme.of(ctx).colorScheme.outline, fontSize: 12)),
-                      const Divider(),
-                    ],
-                    if (sharedBorder)
-                      ExpansionTile(
-                        tilePadding: EdgeInsets.zero,
-                        childrenPadding: const EdgeInsets.only(bottom: 8),
-                        leading: const Icon(Icons.border_outer),
-                        title: const Text('خط دور همهٔ کادرها', style: TextStyle(fontWeight: FontWeight.bold)),
-                        children: [SharedBorderEditor(keys)],
-                      ),
-                    for (final g in groups)
-                      ExpansionTile(
-                        tilePadding: EdgeInsets.zero,
-                        childrenPadding: const EdgeInsets.only(bottom: 8),
-                        leading: const Icon(Icons.crop_square),
-                        title: Text(g.label, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        children: [
-                          StyleEditor(g.key,
-                              glass: true,
-                              border: !sharedBorder,
-                              size: g.compress,
-                              textSize: g.textSize,
-                              sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
-                              sizeMin: .2,
-                              sizeMax: 1.6),
-                        ],
-                      ),
-                    const SizedBox(height: 8),
+                    ExclusiveAccordion(sections: [
+                      if (layoutKey != null)
+                        AccSection(
+                            Icons.open_with,
+                            'چیدمان کادرها',
+                            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                              Row(children: [
+                                Expanded(
+                                  child: FilledButton.tonalIcon(
+                                    onPressed: () {
+                                      Navigator.pop(ctx);
+                                      layoutEditRequest.value = layoutKey;
+                                    },
+                                    icon: const Icon(Icons.open_with),
+                                    label: const Text('ویرایش چیدمان'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => uiStyles.clearRects('$layoutKey.'),
+                                    icon: const Icon(Icons.grid_view),
+                                    label: const Text('بازنشانی چیدمان'),
+                                  ),
+                                ),
+                              ]),
+                              const SizedBox(height: 6),
+                              Text('یا ۲ ثانیه روی هر کادر بالای صفحه نگه دارید.',
+                                  style: TextStyle(color: Theme.of(ctx).colorScheme.outline, fontSize: 12)),
+                            ])),
+                      if (sharedBorder)
+                        AccSection(Icons.border_outer, 'خط دور همهٔ کادرها', SharedBorderEditor(keys)),
+                      for (final g in groups)
+                        AccSection(
+                            Icons.crop_square,
+                            g.label,
+                            StyleEditor(g.key,
+                                glass: true,
+                                border: !sharedBorder,
+                                size: g.compress,
+                                textSize: g.textSize,
+                                sizeLabel: 'ارتفاع کادرها (فشرده‌سازی)',
+                                sizeMin: .2,
+                                sizeMax: 1.6)),
+                    ]),
+                    const SizedBox(height: 4),
                     OutlinedButton.icon(
                       onPressed: () => uiStyles.reset(keys),
                       icon: const Icon(Icons.restart_alt),
@@ -8608,7 +8668,6 @@ jobs:
               ),
             );
           }
-
           Widget styleGear(BuildContext c, String title, List<StyleGroup> groups,
                   {bool shared = false, String? layoutKey, String? bgKey}) =>
               IconButton(
