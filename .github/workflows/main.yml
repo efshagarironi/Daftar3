@@ -2309,6 +2309,77 @@ jobs:
             NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'تنظیمات'),
           ];
 
+          /// آیکون نوار پایین: خانه = آیکون سفارشی (خانهٔ دودکش‌دار)، بقیه = آیکون‌های معمولی
+          Widget _navIcon(int k, double size, Color? color, {bool sel = false}) {
+            if (k == 0) return _HomeIcon(size: size, color: color);
+            final d = _navItems[k];
+            return Icon(((sel ? d.selectedIcon : d.icon) as Icon).icon, size: size, color: color);
+          }
+
+          class _HomeIcon extends StatelessWidget {
+            final double size;
+            final Color? color;
+            const _HomeIcon({required this.size, this.color});
+
+            @override
+            Widget build(BuildContext context) {
+              final c = color ?? IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurfaceVariant;
+              return SizedBox(width: size, height: size, child: CustomPaint(painter: _HomePainter(c)));
+            }
+          }
+
+          class _HomePainter extends CustomPainter {
+            final Color color;
+            _HomePainter(this.color);
+
+            @override
+            void paint(Canvas canvas, Size s) {
+              final w = s.width, h = s.height;
+              canvas.saveLayer(Offset.zero & s, Paint());
+              final fill = Paint()
+                ..color = color
+                ..style = PaintingStyle.fill
+                ..isAntiAlias = true;
+              final line = Paint()
+                ..color = color
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = w * .09
+                ..strokeCap = StrokeCap.round
+                ..strokeJoin = StrokeJoin.round
+                ..isAntiAlias = true;
+              // سقف
+              canvas.drawPath(
+                  Path()
+                    ..moveTo(.04 * w, .52 * h)
+                    ..lineTo(.5 * w, .14 * h)
+                    ..lineTo(.96 * w, .52 * h),
+                  line);
+              // دودکش
+              canvas.drawRRect(
+                  RRect.fromLTRBR(.68 * w, .10 * h, .80 * w, .38 * h, Radius.circular(.02 * w)), fill);
+              // بدنه
+              canvas.drawPath(
+                  Path()
+                    ..moveTo(.17 * w, .53 * h)
+                    ..lineTo(.5 * w, .26 * h)
+                    ..lineTo(.83 * w, .53 * h)
+                    ..lineTo(.83 * w, .86 * h)
+                    ..quadraticBezierTo(.83 * w, .92 * h, .77 * w, .92 * h)
+                    ..lineTo(.23 * w, .92 * h)
+                    ..quadraticBezierTo(.17 * w, .92 * h, .17 * w, .86 * h)
+                    ..close(),
+                  fill);
+              // در (سوراخ شفاف)
+              canvas.drawRRect(
+                  RRect.fromLTRBR(.42 * w, .56 * h, .58 * w, .80 * h, Radius.circular(.04 * w)),
+                  Paint()..blendMode = BlendMode.clear);
+              canvas.restore();
+            }
+
+            @override
+            bool shouldRepaint(_HomePainter o) => o.color != color;
+          }
+
           class _HomeState extends State<Home> with WidgetsBindingObserver {
             int i = 0;
             Timer? _sync;
@@ -2365,7 +2436,7 @@ jobs:
                     final bd = ns.border ? ns.bw : (ns.glass ? 1.2 : 0.0); // ضخامت خط دور نوار
                     return ClipPath(
                       clipper: _NavHideClipper(
-                        MediaQuery.viewPaddingOf(c).bottom + uiStyles.n('nav_lift', 10),
+                        MediaQuery.viewPaddingOf(c).bottom + uiStyles.n('nav_lift', 10).clamp(-15.0, 80.0).toDouble(),
                         uiStyles.n('nav_h', 80) + 2 * bd,
                         uiStyles.n('nav_w', .95).clamp(.5, 1.0).toDouble(),
                         uiStyles.n('nav_r', 20),
@@ -2426,19 +2497,26 @@ jobs:
                         destinations: [
                           for (final k in order)
                             NavigationDestination(
-                              icon: Icon((_navItems[k].icon as Icon).icon, size: uiStyles.n('nav_ic', 24)),
-                              selectedIcon: Icon((_navItems[k].selectedIcon as Icon).icon,
-                                  size: uiStyles.n('nav_ic_act', 30),
-                                  color: uiStyles.bgOf('nav_act_c') != null
-                                      ? Color(uiStyles.bgOf('nav_act_c')!)
-                                      : Theme.of(c).colorScheme.primary),
+                              icon: _navIcon(k, uiStyles.n('nav_ic', 24), null),
+                              selectedIcon: Transform.translate(
+                                  offset: Offset(uiStyles.n('nav_act_dx', 0), uiStyles.n('nav_act_dy', 0)),
+                                  child: _navIcon(
+                                      k,
+                                      uiStyles.n('nav_ic_act', 30),
+                                      uiStyles.bgOf('nav_act_c') != null
+                                          ? Color(uiStyles.bgOf('nav_act_c')!)
+                                          : Theme.of(c).colorScheme.primary,
+                                      sel: true)),
                               label: _navItems[k].label,
                             ),
                         ],
                       ),
                     );
-                    return Padding(
-                      padding: EdgeInsets.only(bottom: inset + uiStyles.n('nav_lift', 10)),
+                    final raw = inset + uiStyles.n('nav_lift', 10).clamp(-15.0, 80.0).toDouble();
+                    return Transform.translate(
+                      offset: Offset(0, raw < 0 ? -raw : 0.0),
+                      child: Padding(
+                      padding: EdgeInsets.only(bottom: raw < 0 ? 0.0 : raw),
                       child: Align(
                         heightFactor: 1,
                         alignment: Alignment.center,
@@ -2465,7 +2543,7 @@ jobs:
                           ),
                         ),
                       ),
-                    );
+                    ));
                   },
                 ),
               ));
@@ -7357,7 +7435,7 @@ jobs:
                                   border: Border.all(color: sel == pos ? pc : Colors.grey, width: sel == pos ? 2.5 : 1),
                                 ),
                                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                                  (_navItems[order[pos]].icon as Icon),
+                                  _navIcon(order[pos], 24, Theme.of(context).colorScheme.onSurface),
                                   const SizedBox(height: 4),
                                   Text(_navItems[order[pos]].label, style: const TextStyle(fontSize: 12)),
                                 ]),
@@ -7384,7 +7462,7 @@ jobs:
                   _nSlider('گردی لبه‌ها', 'nav_r', 20, 0, 40, icon: Icons.rounded_corner),
                   _nSlider('عرض نوار', 'nav_w', .95, .5, 1, pct: true, icon: Icons.swap_horiz),
                   _nSlider('ارتفاع نوار', 'nav_h', 80, 56, 120, icon: Icons.height),
-                  _nSlider('فاصله از پایین (بالا/پایین بردن)', 'nav_lift', 10, 0, 160,
+                  _nSlider('فاصله از پایین (بالا/پایین بردن)', 'nav_lift', 10, -15, 80,
                       icon: Icons.vertical_align_bottom),
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
@@ -7431,11 +7509,14 @@ jobs:
                   _colorRow(c, 'رنگ آیکون فعال', uiStyles.bgOf('nav_act_c'),
                       (v) => uiStyles.setBg('nav_act_c', v),
                       icon: Icons.palette_outlined),
+                  _nSlider('جای آیکون فعال: بالا / پایین', 'nav_act_dy', 0, -20, 20, icon: Icons.swap_vert),
+                  _nSlider('جای آیکون فعال: چپ / راست', 'nav_act_dx', 0, -30, 30, icon: Icons.swap_horiz),
                   Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: TextButton.icon(
                       onPressed: () {
                         uiStyles.resetN('nav_ic');
+                        uiStyles.resetN('nav_act_');
                         uiStyles.setBg('nav_act_c', null);
                       },
                       icon: const Icon(Icons.restart_alt),
